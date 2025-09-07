@@ -15,20 +15,6 @@ This toolkit provides a unified interface to calculate the following popular NLP
 - **CIDEr**
 - **ROUGE-L**
 
-## Installation
-
-1.  Clone the repository:
-    ```bash
-    git clone https://github.com/Tian-ye1214/NLP-evaluation-integration.git
-    cd CaptionMetrics
-    ```
-
-2.  Install the required dependencies:
-    ```bash
-    pip install -r requirements.txt
-    ```
-    This will install `numpy`, `sacrebleu`, `pycocoevalcap`, and `nltk`.
-
 ## Usage
 
 You can run the evaluation directly from the command line using `main.py`. The script takes two arguments: the path to the ground truth (original) captions and the path to the generated captions.
@@ -89,11 +75,11 @@ Each key maps to a list of one or more reference captions.
 
 ```json
 {
-  "image_1": [
+  "captions_1": [
     "A man is riding a wave on a surfboard in the ocean.",
     "A man on a surfboard riding a wave."
   ],
-  "image_2": [
+  "captions_2": [
     "A group of people sitting at a dining table."
   ]
 }
@@ -105,10 +91,10 @@ Each key maps to a list of one or more machine-generated captions to be evaluate
 
 ```json
 {
-  "image_1": [
+  "captions_1": [
     "A person is surfing on a large wave."
   ],
-  "image_2": [
+  "captions_2": [
     "People are eating at a table."
   ]
 }

@@ -147,6 +147,11 @@ class MyDataset(Dataset):
         labels = [tokenizer.pad_token_id] * len(q_input_ids) + a_input_ids
         input_ids = input_ids[:-1]
         labels = labels[1:]
+        
+        max_length = 2048
+        if len(input_ids) > max_length:
+            input_ids = input_ids[:max_length]
+            labels = labels[:max_length]
 
         return {
             'input_ids': input_ids,
@@ -226,3 +231,4 @@ if __name__ == '__main__':
     trainer.train(resume_from_checkpoint=False)
     trainer.save_model('save/pretrain')
     trainer.save_state()
+

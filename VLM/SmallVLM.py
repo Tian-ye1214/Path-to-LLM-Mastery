@@ -1,3 +1,4 @@
+from accelerate import Accelerator
 from transformers import PreTrainedModel, PretrainedConfig, AutoTokenizer, AutoModelForCausalLM
 from transformers import AutoProcessor, AutoModel
 import torch
@@ -5,8 +6,6 @@ import torch.nn as nn
 import torch.nn.functional as F
 from transformers.modeling_outputs import CausalLMOutputWithPast
 from PIL import Image
-import base64
-import io
 from datasets import load_dataset
 from torch.utils.data import Dataset
 from transformers import Trainer, TrainingArguments
@@ -16,14 +15,16 @@ from typing import List, Dict, Any
 class VLMConfig(PretrainedConfig):
     model_type = "vlm_model"
 
-    def __init__(self, llm_model_path='G:/代码/ModelWeight/Qwen3-0.6B',
-                 vision_model_path='G:/代码/ModelWeight/DINOv3-Conv-Large',
+    def __init__(self, llm_model_path='/root/autodl-tmp/ModelCheckpoint/Qwen3',
+                 vision_model_path='/root/autodl-tmp/ModelCheckpoint/Dinov3',
                  freeze_vision_model=True,
-                 image_pad_num=50,
+                 freeze_llm_model=False,
+                 image_pad_num=201,
                  **kwargs):
         self.vision_model_path = vision_model_path
         self.llm_model_path = llm_model_path
         self.freeze_vision_model = freeze_vision_model
+        self.freeze_llm_model = freeze_llm_model
         self.image_pad_num = image_pad_num
         super().__init__(**kwargs)
 
@@ -34,24 +35,32 @@ class VLM(PreTrainedModel):
     def __init__(self, config):
         super().__init__(config)
         self.config = config
-        self.vision_model = AutoModel.from_pretrained(self.config.vision_model_path, low_cpu_mem_usage=True)
+        self.vision_model = AutoModel.from_pretrained(self.config.vision_model_path, low_cpu_mem_usage=True, attn_implementation="sdpa")
         self.processor = AutoProcessor.from_pretrained(self.config.vision_model_path)
-        self.llm_model = AutoModelForCausalLM.from_pretrained(self.config.llm_model_path, low_cpu_mem_usage=True, attn_implementation="flash_attention_2")
+        self.llm_model = AutoModelForCausalLM.from_pretrained(self.config.llm_model_path, low_cpu_mem_usage=True, attn_implementation="sdpa")
         self.tokenizer = AutoTokenizer.from_pretrained(self.config.llm_model_path, use_fast=True)
-        self.linear1 = nn.Linear(768, self.llm_model.config.hidden_size)
-        self.linear2 = nn.Linear(self.llm_model.config.hidden_size, self.llm_model.config.hidden_size)
+        self.adaper = nn.Sequential(
+            nn.RMSNorm(1024),
+            nn.Linear(1024, self.llm_model.config.hidden_size),
+            nn.GELU(),
+            nn.Linear(self.llm_model.config.hidden_size, self.llm_model.config.hidden_size)
+        )
+
         if self.config.freeze_vision_model:
+            print("*" * 20, "Freezing Vision Model", "*" * 20)
             for param in self.vision_model.parameters():
                 param.requires_grad = False
-        for param in self.llm_model.parameters():
-            param.requires_grad = False
+        if self.config.freeze_llm_model:
+            print("*" * 20, "Freezing LLM Model", "*" * 20)
+            for param in self.llm_model.parameters():
+                param.requires_grad = False
 
     def forward(self, input_ids, labels, pixel_values, attention_mask=None):
         text_embeds = self.llm_model.get_input_embeddings()(input_ids)
 
         image_embeds = self.vision_model(pixel_values).last_hidden_state
 
-        image_features = self.linear2(F.silu(self.linear1(image_embeds)))
+        image_features = self.adaper(image_embeds)
 
         text_embeds = text_embeds.to(image_features.dtype)
 
@@ -77,9 +86,11 @@ class VLM(PreTrainedModel):
 
 
 class MyDataset(Dataset):
-    def __init__(self, data_path, tokenizer, processor, config):
+    def __init__(self, data_paths, tokenizer, processor, config):
         super().__init__()
-        self.datas = load_dataset(data_path)['train']
+        datasets_list = [load_dataset(data_paths, 'en')['train'], load_dataset(data_paths, 'zh')['train']]
+        from datasets import concatenate_datasets
+        self.datas = concatenate_datasets(datasets_list).shuffle(seed=42)
         self.tokenizer = tokenizer
         self.processor = processor
         self.config = config
@@ -90,42 +101,40 @@ class MyDataset(Dataset):
     def __getitem__(self, index):
         sample = self.datas[index]
         try:
-            image_name = sample['image']
-            image_data = 'data:image/jpeg;base64,' + image_name
-            header, encoded = image_data.split(',', 1)
-            image_bytes = base64.b64decode(encoded)
-
-            q_text = '<|image_pad|>' * self.config.image_pad_num + self.tokenizer.apply_chat_template(
+            conversations = sample['messages']
+            q_text = self.tokenizer.apply_chat_template(
                 [
                     {"role": "system", "content": 'You are a helpful assistant.'},
-                    {"role": "user", "content": sample['question'] + '\n' + sample['multi-choice options']}
-                ]
-                , tokenize=False, add_generation_prompt=True)
-            a_text = str(sample['answer']) + self.tokenizer.eos_token
+                    {"role": "user", "content": conversations[0]['content']}
+                ],
+                tokenize=False,
+                add_generation_prompt=True,
+                enable_thinking=False).replace('<image>', '<|image_pad|>' * self.config.image_pad_num)
+            a_text = conversations[1]['content'] + self.tokenizer.eos_token
             q_input_ids = self.tokenizer(q_text)['input_ids']
             a_input_ids = self.tokenizer(a_text)['input_ids']
             input_ids = q_input_ids + a_input_ids
-            labels = [self.tokenizer.pad_token_id] * len(q_input_ids) + a_input_ids
+            labels = [tokenizer.pad_token_id] * len(q_input_ids) + a_input_ids
             input_ids = input_ids[:-1]
             labels = labels[1:]
 
-            image = Image.open(io.BytesIO(image_bytes)).convert('RGB')
+            image = sample['images'][0].convert("RGB")
             pixel_values = self.processor(images=image, return_tensors="pt")['pixel_values']
         except:
-            default_image = Image.new('RGB', (224, 224), color='white')
+            default_image = Image.new('RGB', (384, 384), color='white')
             pixel_values = self.processor(images=default_image, return_tensors="pt")['pixel_values']
             q_text = self.tokenizer.apply_chat_template(
                 [
                     {"role": "system", "content": 'You are a helpful assistant.'},
-                    {"role": "user", "content": "图片内容是什么\n<image>"}
-                ]
-                , tokenize=False, add_generation_prompt=True).replace('<image>',
-                                                                      '<|image_pad|>' * self.config.image_pad_num)
+                    {"role": "user", "content": "图片内容是什么？<image>"}],
+                tokenize=False,
+                add_generation_prompt=True,
+                enable_thinking=False).replace('<image>', '<|image_pad|>' * self.config.image_pad_num)
             a_text = '图片内容为空' + self.tokenizer.eos_token
             q_input_ids = self.tokenizer(q_text)['input_ids']
             a_input_ids = self.tokenizer(a_text)['input_ids']
             input_ids = q_input_ids + a_input_ids
-            labels = [self.tokenizer.pad_token_id] * len(q_input_ids) + a_input_ids
+            labels = [tokenizer.pad_token_id] * len(q_input_ids) + a_input_ids
             input_ids = input_ids[:-1]
             labels = labels[1:]
 
@@ -157,28 +166,31 @@ class MyDataCollator:
 
 
 if __name__ == '__main__':
-    config = VLMConfig(vision_model_path='G:/代码/ModelWeight/DINOv3-Conv-Large/', image_pad_num=50)
-    model = VLM(config).cuda()
-    print(model)
-    print(f'模型参数量为：{sum(p.numel() for p in model.parameters() if p.requires_grad)}')
-    data_path = './TreeBench'
+    accelerator = Accelerator()
+    config = VLMConfig()
+    model = VLM(config).half()
+
+    if accelerator.is_main_process:
+        print(model)
+        print(f'模型参数量为：{sum(p.numel() for p in model.parameters() if p.requires_grad)}')
+    data_path = '/root/autodl-tmp/Dataset/llava'
     tokenizer = AutoTokenizer.from_pretrained(config.llm_model_path, use_fast=True)
     processor = AutoProcessor.from_pretrained(config.vision_model_path)
     output_dir = 'save/pretrain'
     args = TrainingArguments(
         output_dir=output_dir,
         do_train=True,
-        per_device_train_batch_size=4,
+        per_device_train_batch_size=2,
         learning_rate=1e-4,
         num_train_epochs=5,
-        save_steps=500,
-        fp16=True,
-        gradient_accumulation_steps=8,
-        logging_steps=100,
-        dataloader_pin_memory=True,
-        dataloader_num_workers=1,
+        save_strategy='epoch',
+        bf16=True,
+        gradient_accumulation_steps=16,
+        logging_steps=1,
+        dataloader_num_workers=50,
         use_liger_kernel=True,
         warmup_ratio=0.1,
+        deepspeed='deepspeed_config.json',
     )
     trainer = Trainer(
         model=model,

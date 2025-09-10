@@ -3,13 +3,12 @@ from transformers import PreTrainedModel, PretrainedConfig, AutoTokenizer, AutoM
 from transformers import AutoProcessor, AutoModel
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
 from transformers.modeling_outputs import CausalLMOutputWithPast
-from PIL import Image
 from datasets import load_dataset
 from torch.utils.data import Dataset
 from transformers import Trainer, TrainingArguments
 from typing import List, Dict, Any
+import numpy as np
 
 
 class VLMConfig(PretrainedConfig):
@@ -39,6 +38,12 @@ class VLM(PreTrainedModel):
         self.processor = AutoProcessor.from_pretrained(self.config.vision_model_path)
         self.llm_model = AutoModelForCausalLM.from_pretrained(self.config.llm_model_path, low_cpu_mem_usage=True, attn_implementation="sdpa")
         self.tokenizer = AutoTokenizer.from_pretrained(self.config.llm_model_path, use_fast=True)
+        if self.tokenizer.pad_token is None:
+            self.tokenizer.pad_token = self.tokenizer.eos_token
+        if '<|image_pad|>' not in self.tokenizer.get_vocab():
+            self.tokenizer.add_tokens(['<|image_pad|>'])
+            self.llm_model.resize_token_embeddings(len(self.tokenizer), mean_resizing=True)
+            
         self.adaper = nn.Sequential(
             nn.RMSNorm(1024),
             nn.Linear(1024, self.llm_model.config.hidden_size),
@@ -47,24 +52,23 @@ class VLM(PreTrainedModel):
         )
 
         if self.config.freeze_vision_model:
-            print("*" * 20, "Freezing Vision Model", "*" * 20)
             for param in self.vision_model.parameters():
                 param.requires_grad = False
         if self.config.freeze_llm_model:
-            print("*" * 20, "Freezing LLM Model", "*" * 20)
             for param in self.llm_model.parameters():
                 param.requires_grad = False
 
-    def forward(self, input_ids, labels, pixel_values, attention_mask=None):
+    def forward(self, input_ids, labels, pixel_values=None, attention_mask=None):
         text_embeds = self.llm_model.get_input_embeddings()(input_ids)
 
-        image_embeds = self.vision_model(pixel_values).last_hidden_state
+        if pixel_values is not None:
+            image_embeds = self.vision_model(pixel_values).last_hidden_state
+            image_features = self.adaper(image_embeds)
+            text_embeds = text_embeds.to(image_features.dtype)
+            inputs_embeds = self.merge_input_ids_with_image_features(image_features, text_embeds, input_ids)
+        else:
+            inputs_embeds = text_embeds
 
-        image_features = self.adaper(image_embeds)
-
-        text_embeds = text_embeds.to(image_features.dtype)
-
-        inputs_embeds = self.merge_input_ids_with_image_features(image_features, text_embeds, input_ids)
         outputs = self.llm_model(inputs_embeds=inputs_embeds, attention_mask=attention_mask)
         logits = outputs[0]
         loss = None
@@ -88,7 +92,7 @@ class VLM(PreTrainedModel):
 class MyDataset(Dataset):
     def __init__(self, data_paths, tokenizer, processor, config):
         super().__init__()
-        datasets_list = [load_dataset(data_paths, 'en')['train'], load_dataset(data_paths, 'zh')['train']]
+        datasets_list = [load_dataset(data_paths, cache_dir='/root/autodl-tmp/Dataset/llava-cache')['train']]
         from datasets import concatenate_datasets
         self.datas = concatenate_datasets(datasets_list).shuffle(seed=42)
         self.tokenizer = tokenizer
@@ -100,43 +104,46 @@ class MyDataset(Dataset):
 
     def __getitem__(self, index):
         sample = self.datas[index]
-        try:
-            conversations = sample['messages']
+        image = sample['image']
+        if image is not None:
+            if hasattr(image, 'convert'):
+                if image.mode != 'RGB':
+                    image = image.convert('RGB')
+            elif isinstance(image, np.ndarray):
+                if image.ndim == 3 and image.shape[-1] == 4:
+                    image = image[..., :3]
+                elif image.ndim == 2:
+                    image = np.stack([image] * 3, axis=-1)
+            pixel_values = self.processor(images=image, return_tensors="pt")['pixel_values']
+            conversations = sample['conversations']
             q_text = self.tokenizer.apply_chat_template(
                 [
                     {"role": "system", "content": 'You are a helpful assistant.'},
-                    {"role": "user", "content": conversations[0]['content']}
+                    {"role": "user", "content": conversations[0]['value']}
                 ],
                 tokenize=False,
                 add_generation_prompt=True,
                 enable_thinking=False).replace('<image>', '<|image_pad|>' * self.config.image_pad_num)
-            a_text = conversations[1]['content'] + self.tokenizer.eos_token
-            q_input_ids = self.tokenizer(q_text)['input_ids']
-            a_input_ids = self.tokenizer(a_text)['input_ids']
-            input_ids = q_input_ids + a_input_ids
-            labels = [tokenizer.pad_token_id] * len(q_input_ids) + a_input_ids
-            input_ids = input_ids[:-1]
-            labels = labels[1:]
-
-            image = sample['images'][0].convert("RGB")
-            pixel_values = self.processor(images=image, return_tensors="pt")['pixel_values']
-        except:
-            default_image = Image.new('RGB', (384, 384), color='white')
-            pixel_values = self.processor(images=default_image, return_tensors="pt")['pixel_values']
+            a_text = conversations[1]['value'] + self.tokenizer.eos_token
+        else:
+            pixel_values = None
+            conversations = sample['conversations']
             q_text = self.tokenizer.apply_chat_template(
                 [
                     {"role": "system", "content": 'You are a helpful assistant.'},
-                    {"role": "user", "content": "图片内容是什么？<image>"}],
+                    {"role": "user", "content": conversations[0]['value']}
+                ],
                 tokenize=False,
                 add_generation_prompt=True,
                 enable_thinking=False).replace('<image>', '<|image_pad|>' * self.config.image_pad_num)
-            a_text = '图片内容为空' + self.tokenizer.eos_token
-            q_input_ids = self.tokenizer(q_text)['input_ids']
-            a_input_ids = self.tokenizer(a_text)['input_ids']
-            input_ids = q_input_ids + a_input_ids
-            labels = [tokenizer.pad_token_id] * len(q_input_ids) + a_input_ids
-            input_ids = input_ids[:-1]
-            labels = labels[1:]
+            a_text = conversations[1]['value'] + self.tokenizer.eos_token
+
+        q_input_ids = self.tokenizer(q_text)['input_ids']
+        a_input_ids = self.tokenizer(a_text)['input_ids']
+        input_ids = q_input_ids + a_input_ids
+        labels = [tokenizer.pad_token_id] * len(q_input_ids) + a_input_ids
+        input_ids = input_ids[:-1]
+        labels = labels[1:]
 
         return {
             'input_ids': input_ids,
@@ -158,11 +165,15 @@ class MyDataCollator:
             input_ids.append(
                 feature['input_ids'] + [self.tokenizer.pad_token_id] * (max_len - len(feature['input_ids'])))
             labels.append(feature['labels'] + [self.tokenizer.pad_token_id] * (max_len - len(feature['labels'])))
-            pixel_values.append(feature['pixel_values'])
+            if feature['pixel_values'] is not None:
+                pixel_values.append(feature['pixel_values'])
 
-        return {'input_ids': torch.tensor(input_ids, dtype=torch.long),
-                'labels': torch.tensor(labels, dtype=torch.long),
-                'pixel_values': torch.cat(pixel_values, dim=0)}
+        result = {
+            'input_ids': torch.tensor(input_ids, dtype=torch.long),
+            'labels': torch.tensor(labels, dtype=torch.long),
+            'pixel_values': torch.cat(pixel_values, dim=0) if pixel_values else None
+        }
+        return result
 
 
 if __name__ == '__main__':
@@ -177,15 +188,17 @@ if __name__ == '__main__':
     tokenizer = AutoTokenizer.from_pretrained(config.llm_model_path, use_fast=True)
     processor = AutoProcessor.from_pretrained(config.vision_model_path)
     output_dir = 'save/pretrain'
+    # dataset_num 779289
     args = TrainingArguments(
         output_dir=output_dir,
         do_train=True,
         per_device_train_batch_size=2,
-        learning_rate=1e-4,
-        num_train_epochs=5,
-        save_strategy='epoch',
+        learning_rate=5e-5,
+        num_train_epochs=1,
+        save_strategy='steps',
+        save_steps=507,
         bf16=True,
-        gradient_accumulation_steps=16,
+        gradient_accumulation_steps=128,
         logging_steps=1,
         dataloader_num_workers=50,
         use_liger_kernel=True,

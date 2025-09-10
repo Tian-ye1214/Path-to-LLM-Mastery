@@ -9,6 +9,8 @@ from torch.utils.data import Dataset
 from transformers import Trainer, TrainingArguments
 from typing import List, Dict, Any
 import numpy as np
+import swanlab
+from swanlab.integration.transformers import SwanLabCallback
 
 
 class VLMConfig(PretrainedConfig):
@@ -34,16 +36,18 @@ class VLM(PreTrainedModel):
     def __init__(self, config):
         super().__init__(config)
         self.config = config
-        self.vision_model = AutoModel.from_pretrained(self.config.vision_model_path, low_cpu_mem_usage=True, attn_implementation="sdpa")
+        self.vision_model = AutoModel.from_pretrained(self.config.vision_model_path, low_cpu_mem_usage=True,
+                                                      attn_implementation="sdpa")
         self.processor = AutoProcessor.from_pretrained(self.config.vision_model_path)
-        self.llm_model = AutoModelForCausalLM.from_pretrained(self.config.llm_model_path, low_cpu_mem_usage=True, attn_implementation="sdpa")
+        self.llm_model = AutoModelForCausalLM.from_pretrained(self.config.llm_model_path, low_cpu_mem_usage=True,
+                                                              attn_implementation="sdpa")
         self.tokenizer = AutoTokenizer.from_pretrained(self.config.llm_model_path, use_fast=True)
         if self.tokenizer.pad_token is None:
             self.tokenizer.pad_token = self.tokenizer.eos_token
         if '<|image_pad|>' not in self.tokenizer.get_vocab():
             self.tokenizer.add_tokens(['<|image_pad|>'])
             self.llm_model.resize_token_embeddings(len(self.tokenizer), mean_resizing=True)
-            
+
         self.adaper = nn.Sequential(
             nn.RMSNorm(1024),
             nn.Linear(1024, self.llm_model.config.hidden_size),
@@ -105,6 +109,7 @@ class MyDataset(Dataset):
     def __getitem__(self, index):
         sample = self.datas[index]
         image = sample['image']
+        conversations = sample['conversations']
         if image is not None:
             if hasattr(image, 'convert'):
                 if image.mode != 'RGB':
@@ -115,7 +120,6 @@ class MyDataset(Dataset):
                 elif image.ndim == 2:
                     image = np.stack([image] * 3, axis=-1)
             pixel_values = self.processor(images=image, return_tensors="pt")['pixel_values']
-            conversations = sample['conversations']
             q_text = self.tokenizer.apply_chat_template(
                 [
                     {"role": "system", "content": 'You are a helpful assistant.'},
@@ -127,7 +131,6 @@ class MyDataset(Dataset):
             a_text = conversations[1]['value'] + self.tokenizer.eos_token
         else:
             pixel_values = None
-            conversations = sample['conversations']
             q_text = self.tokenizer.apply_chat_template(
                 [
                     {"role": "system", "content": 'You are a helpful assistant.'},
@@ -135,7 +138,7 @@ class MyDataset(Dataset):
                 ],
                 tokenize=False,
                 add_generation_prompt=True,
-                enable_thinking=False).replace('<image>', '<|image_pad|>' * self.config.image_pad_num)
+                enable_thinking=False)
             a_text = conversations[1]['value'] + self.tokenizer.eos_token
 
         q_input_ids = self.tokenizer(q_text)['input_ids']
@@ -187,7 +190,7 @@ if __name__ == '__main__':
     data_path = '/root/autodl-tmp/Dataset/llava'
     tokenizer = AutoTokenizer.from_pretrained(config.llm_model_path, use_fast=True)
     processor = AutoProcessor.from_pretrained(config.vision_model_path)
-    output_dir = 'save/pretrain'
+    output_dir = 'save/'
     # dataset_num 779289
     args = TrainingArguments(
         output_dir=output_dir,
@@ -200,16 +203,24 @@ if __name__ == '__main__':
         bf16=True,
         gradient_accumulation_steps=128,
         logging_steps=1,
+        logging_strategy='steps',
+        logging_dir=f'{output_dir}/logs',
         dataloader_num_workers=50,
         use_liger_kernel=True,
         warmup_ratio=0.1,
         deepspeed='deepspeed_config.json',
+        report_to="none",
+    )
+    swanlab_callback = SwanLabCallback(
+        project="MySmallVLM",
+        experiment_name="SmallVLM"
     )
     trainer = Trainer(
         model=model,
         args=args,
         train_dataset=MyDataset(data_path, tokenizer, processor, config),
-        data_collator=MyDataCollator(tokenizer)
+        data_collator=MyDataCollator(tokenizer),
+        callbacks=[swanlab_callback],
     )
 
     trainer.train(resume_from_checkpoint=False)

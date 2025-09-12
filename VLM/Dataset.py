@@ -8,16 +8,19 @@ from typing import List, Dict, Any
 def find_assistant_tokens(tokenizer, target):
     result = []
     start_index = 0
-    end_index = 0
     while start_index <= len(target) - 1:
-        if target[start_index] != tokenizer('assistant')['input_ids'][0]:
-            start_index += 1
-            end_index += 1
+        if target[start_index] == tokenizer('assistant')['input_ids'][0]:
+            end_index = start_index + 1
+            while end_index < len(target):
+                if target[end_index] == tokenizer('<|im_end|>')['input_ids'][0]:
+                    result.append((start_index + 1, end_index + 1))
+                    start_index = end_index + 1
+                    break
+                end_index += 1
+            else:
+                start_index += 1
         else:
-            end_index += 1
-            if target[end_index] == tokenizer('<|im_end|>')['input_ids'][0]:
-                result.append((start_index + 1, end_index + 1))
-                start_index = end_index + 1
+            start_index += 1
     return result
 
 
@@ -112,4 +115,5 @@ class MyDataCollator:
             'labels': torch.tensor(labels, dtype=torch.long),
             'pixel_values': pixel_values
         }
+
         return result

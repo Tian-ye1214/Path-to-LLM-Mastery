@@ -20,18 +20,19 @@ if __name__ == '__main__':
     data_path = '/root/autodl-tmp/Dataset/llava'
     tokenizer = model.tokenizer
     processor = model.processor
+
     output_dir = 'save_multi_conversation/'
     # dataset_num 779289
     args = TrainingArguments(
         output_dir=output_dir,
         do_train=True,
-        per_device_train_batch_size=4,
-        learning_rate=3e-5,
+        per_device_train_batch_size=1,
+        learning_rate=6e-5,
         num_train_epochs=1,
         save_strategy='steps',
         save_steps=379,
         bf16=True,
-        gradient_accumulation_steps=64,
+        gradient_accumulation_steps=256,
         logging_steps=30,
         logging_strategy='steps',
         logging_dir=f'{output_dir}/logs',
@@ -42,18 +43,18 @@ if __name__ == '__main__':
     )
     swanlab_callback = SwanLabCallback(
         project="MySmallVLM",
-        experiment_name="SmallVLM_checkpoint_multi_conversation",
+        experiment_name="multi_conversation",
         resume=True,
-        id="pp7m6xdjrjqw8t5f8qa4j",
+        id="5sld7un7a6ilaz9myc7mp",
     )
     trainer = Trainer(
         model=model,
         args=args,
         train_dataset=MyDataset(data_path, tokenizer, processor, config),
-        data_collator=MyDataCollator(tokenizer),
+        data_collator=MyDataCollator(tokenizer=tokenizer, model=model, label_pad_token_id=tokenizer.pad_token_id, pad_to_multiple_of=32),
         callbacks=[swanlab_callback],
     )
 
     trainer.train(resume_from_checkpoint=False)
     trainer.save_model(f'{output_dir}/sft')
-    trainer.save_state()
+

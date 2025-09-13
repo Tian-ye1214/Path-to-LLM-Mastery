@@ -66,9 +66,10 @@ class MyDataset(Dataset):
                 messages.append({"role": "user", "content": conversation['value']})
             else:
                 messages.append({"role": "assistant", "content": conversation['value']})
-        text = self.tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True,
-                                                  enable_thinking=False).replace('<image>',
-                                                                                 '<|image_pad|>' * self.config.image_pad_num)
+        text = (self.tokenizer.apply_chat_template(
+            messages, tokenize=False, add_generation_prompt=True, enable_thinking=False)
+                .replace('<image>', '<|vision_start|>' + '<|image_pad|>' * self.config.image_pad_num + '<|vision_end|>')
+                )
 
         input_ids = self.tokenizer(text)['input_ids']
         indexs = find_assistant_tokens(self.tokenizer, input_ids)
@@ -76,7 +77,7 @@ class MyDataset(Dataset):
         for index in indexs:
             labels[index[0]:index[1]] = input_ids[index[0]:index[1]]
 
-        max_length = 5120
+        max_length = 4096
         if len(input_ids) > max_length:
             input_ids = input_ids[:max_length]
             labels = labels[:max_length]
@@ -97,4 +98,3 @@ class MyDataCollator(DataCollatorForSeq2Seq):
         batch = super().__call__(features, return_tensors)
         batch["pixel_values"] = pixel_values
         return batch
-

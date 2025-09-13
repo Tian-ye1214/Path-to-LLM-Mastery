@@ -47,7 +47,7 @@ if __name__ == '__main__':
         model=model,
         args=args,
         train_dataset=MyDataset(data_path, tokenizer, processor, config),
-        data_collator=MyDataCollator(tokenizer),
+        data_collator=MyDataCollator(tokenizer=tokenizer, model=model, label_pad_token_id=tokenizer.pad_token_id, pad_to_multiple_of=8),
         callbacks=[swanlab_callback],
     )
 

@@ -7,6 +7,7 @@ from transformers.modeling_outputs import CausalLMOutputWithPast
 
 class VLMConfig(PretrainedConfig):
     model_type = "vlm_model"
+
     def __init__(self, llm_model_path='/root/autodl-tmp/ModelCheckpoint/Qwen3',
                  vision_model_path='/root/autodl-tmp/ModelCheckpoint/Dinov3',
                  freeze_vision_model=False,
@@ -31,7 +32,8 @@ class VLM(PreTrainedModel):
                                                       dtype=torch.bfloat16, attn_implementation="flash_attention_2")
         self.processor = AutoProcessor.from_pretrained(self.config.vision_model_path)
         self.llm_model = AutoModelForCausalLM.from_pretrained(self.config.llm_model_path, low_cpu_mem_usage=True,
-                                                              dtype=torch.bfloat16, attn_implementation="flash_attention_2")
+                                                              dtype=torch.bfloat16,
+                                                              attn_implementation="flash_attention_2")
         self.tokenizer = AutoTokenizer.from_pretrained(self.config.llm_model_path, use_fast=True)
         if self.tokenizer.pad_token is None:
             self.tokenizer.pad_token = self.tokenizer.eos_token
@@ -57,21 +59,13 @@ class VLM(PreTrainedModel):
         text_embeds = self.llm_model.get_input_embeddings()(input_ids)
 
         if pixel_values is not None:
-            image_token_id = self.tokenizer('<|image_pad|>')['input_ids'][0]
-            has_image_mask = torch.any(input_ids == image_token_id, dim=1)
-            if has_image_mask.sum() > 0:
-                image_pixel_values = pixel_values[has_image_mask]
-                image_embeds = self.vision_model(image_pixel_values).last_hidden_state
-
-                patch_embeds = image_embeds[:, 5:, :]  # [batch, 196, 1024]
-                b, num_patches, hidden_dim = patch_embeds.shape
-                patch_embeds = patch_embeds.view(b, num_patches // 4, hidden_dim * 4)  # [batch, 49, 4096]
-
-                image_features = self.adapter(patch_embeds)
-                text_embeds = text_embeds.to(image_features.dtype)
-                inputs_embeds = self.merge_input_ids_with_image_features(image_features, text_embeds, input_ids)
-            else:
-                inputs_embeds = text_embeds
+            image_embeds = self.vision_model(pixel_values).last_hidden_state
+            patch_embeds = image_embeds[:, 5:, :]  # [batch, 196, 1024]
+            b, num_patches, hidden_dim = patch_embeds.shape
+            patch_embeds = patch_embeds.view(b, num_patches // 4, hidden_dim * 4)  # [batch, 49, 4096]
+            image_features = self.adapter(patch_embeds)
+            text_embeds = text_embeds.to(image_features.dtype)
+            inputs_embeds = self.merge_input_ids_with_image_features(image_features, text_embeds, input_ids)
         else:
             inputs_embeds = text_embeds
 

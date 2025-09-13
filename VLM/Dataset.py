@@ -8,19 +8,28 @@ from typing import List, Dict, Any
 def find_assistant_tokens(tokenizer, target):
     result = []
     start_index = 0
-    while start_index <= len(target) - 1:
-        if target[start_index] == tokenizer('assistant')['input_ids'][0]:
-            end_index = start_index + 1
-            while end_index < len(target):
-                if target[end_index] == tokenizer('<|im_end|>')['input_ids'][0]:
-                    result.append((start_index + 1, end_index + 1))
-                    start_index = end_index + 1
-                    break
-                end_index += 1
-            else:
-                start_index += 1
-        else:
+    assistant_id = tokenizer('assistant')['input_ids'][0]
+    im_end_id = tokenizer('<|im_end|>')['input_ids'][0]
+
+    while start_index < len(target):
+        if target[start_index] != assistant_id:
             start_index += 1
+            continue
+
+        end_index = start_index + 1
+        found_end = False
+
+        while end_index < len(target):
+            if target[end_index] == im_end_id:
+                result.append((start_index + 1, end_index + 1))
+                found_end = True
+                break
+            end_index += 1
+
+        if not found_end:
+            result.append((start_index + 1, len(target)))
+        start_index = end_index + 1
+
     return result
 
 
@@ -68,10 +77,8 @@ class MyDataset(Dataset):
         labels = len(input_ids) * [self.tokenizer.pad_token_id]
         for index in indexs:
             labels[index[0]:index[1]] = input_ids[index[0]:index[1]]
-        input_ids = input_ids[:-1]
-        labels = labels[1:]
 
-        max_length = 1536
+        max_length = 4096
         if len(input_ids) > max_length:
             input_ids = input_ids[:max_length]
             labels = labels[:max_length]
@@ -115,5 +122,4 @@ class MyDataCollator:
             'labels': torch.tensor(labels, dtype=torch.long),
             'pixel_values': pixel_values
         }
-
         return result

@@ -40,6 +40,12 @@ class VLM(PreTrainedModel):
         if '<|image_pad|>' not in self.tokenizer.get_vocab():
             self.tokenizer.add_tokens(['<|image_pad|>'])
             self.llm_model.resize_token_embeddings(len(self.tokenizer), mean_resizing=True)
+        if '<|vision_start|>' not in self.tokenizer.get_vocab():
+            self.tokenizer.add_tokens(['<|vision_start|>'])
+            self.llm_model.resize_token_embeddings(len(self.tokenizer), mean_resizing=True)
+        if '<|vision_end|>' not in self.tokenizer.get_vocab():
+            self.tokenizer.add_tokens(['<|vision_end|>'])
+            self.llm_model.resize_token_embeddings(len(self.tokenizer), mean_resizing=True)
 
         self.adapter = nn.Sequential(
             nn.RMSNorm(4096, dtype=torch.bfloat16),

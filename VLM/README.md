@@ -16,13 +16,15 @@ SmallVLM结合了DINOv3视觉编码器和Qwen语言模型，实现了多模态�
 ## 数据集
 
 使用[LLaVA-NeXT-Data](https://huggingface.co/datasets/lmms-lab/LLaVA-NeXT-Data)数据集进行单轮问答预训练、多轮问答SFT
-模型权重下载地址
+
+模型权重下载地址：
 
 [pretrain](https://pan.baidu.com/s/1NtG0ElpOmgH5GxZey9jX7w?pwd=yu4v)
 
 [SFT](https://pan.baidu.com/s/1qiF7-rUEMws-oxjlBv6zuQ?pwd=cjc4)
 
 训练详情：[SwanLab](https://swanlab.cn/@tian_ye/MySmallVLM?utm_source=website_qr&utm_medium=qr_scan)
+
 
 
 

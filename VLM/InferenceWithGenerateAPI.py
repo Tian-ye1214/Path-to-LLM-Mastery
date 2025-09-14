@@ -12,7 +12,6 @@ model = AutoModelForCausalLM.from_pretrained(model_path, low_cpu_mem_usage=True,
 model.eval()
 processor = model.processor
 tokenizer = model.tokenizer
-tokenizer.pad_token_id = tokenizer.eos_token_id
 
 q_text = tokenizer.apply_chat_template(
     [
@@ -34,8 +33,12 @@ pixel_values = processor(images=image, return_tensors="pt")['pixel_values'].to(d
 
 max_new_tokens = 512
 min_new_tokens = 10
+temperature = 0.8
+top_k = 20
+top_p = 0.8
+min_p = 0.0
 num_beams = 4
-repetition_penalty = 1.1
+repetition_penalty = 1.05
 
 text_embeds = model.llm_model.get_input_embeddings()(input_ids)
 image_embeds = model.vision_model(pixel_values).last_hidden_state
@@ -52,7 +55,12 @@ with torch.inference_mode():
         attention_mask=attention_mask,
         max_new_tokens=max_new_tokens,
         min_new_tokens=min_new_tokens,
-        # num_beams=num_beams,  # Using beam search may get stuck in a loop#
+        do_sample=True,
+        temperature=temperature,
+        top_k=top_k,
+        top_p=top_p,
+        min_p=min_p,
+        # num_beams=num_beams,  # Using beam search may get stuck in a loop
         repetition_penalty=repetition_penalty,
         eos_token_id=tokenizer.eos_token_id
     )

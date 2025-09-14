@@ -6,7 +6,7 @@ from torch.nn import functional as F
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 model_path = ''
-AutoConfig.register("vlm_model", VLMConfig)
+AutoConfig.register("Qwenov3", VLMConfig)
 AutoModelForCausalLM.register(VLMConfig, VLM)
 
 model = AutoModelForCausalLM.from_pretrained(model_path, low_cpu_mem_usage=True, dtype=torch.bfloat16).to(device)
@@ -17,29 +17,29 @@ tokenizer = model.tokenizer
 q_text = tokenizer.apply_chat_template(
     [
         {"role": "system", "content": 'You are a helpful assistant.'},
-        {"role": "user", "content": '描述图片内容\n<image>'}
+        {"role": "user", "content": '<image>\n描述图片内容。'}
     ],
     tokenize=False,
-    add_generation_prompt=True).replace('<image>', '<|image_pad|>'*49)
+    add_generation_prompt=True, enable_thinking=False).replace('<image>', '<|vision_start|>' + '<|image_pad|>' * model.config.image_pad_num + '<|vision_end|>')
 
 input_ids = tokenizer(q_text, return_tensors='pt')['input_ids'].to(device)
 
-image = Image.open('').convert("RGB")
+image = Image.open('./A (3).jpg')
 pixel_values = processor(images=image, return_tensors="pt")['pixel_values'].to(device)
 
 
-max_new_tokens = 1024
+max_new_tokens = 512
 temperature = 0.8
 eos = tokenizer.eos_token_id
 top_k = 20
 top_p = 0.95
 s = input_ids.shape[1]
-while input_ids.shape[1] < s + max_new_tokens - 1:  
-    inference_res = model(input_ids, None, pixel_values)  
-    logits = inference_res.logits 
-    logits = logits[:, -1, :] 
+while input_ids.shape[1] < s + max_new_tokens - 1:
+    inference_res = model(input_ids, None, pixel_values)
+    logits = inference_res.logits
+    logits = logits[:, -1, :]
 
-    for token in set(input_ids.tolist()[0]):  
+    for token in set(input_ids.tolist()[0]):
         logits[:, token] /= 1.0
 
     if temperature == 0.0:
@@ -60,10 +60,10 @@ while input_ids.shape[1] < s + max_new_tokens - 1:
             probs = torch.zeros_like(probs).scatter_(-1, sorted_indices, sorted_probs)
             probs = probs / probs.sum(dim=-1, keepdim=True)
 
-        idx_next = torch.multinomial(probs, num_samples=1, generator=None)  
+        idx_next = torch.multinomial(probs, num_samples=1, generator=None)
 
-    if idx_next == eos:  
+    if idx_next == eos:
         break
 
-    input_ids = torch.cat((input_ids, idx_next), dim=1)  
+    input_ids = torch.cat((input_ids, idx_next), dim=1)
 print(tokenizer.decode(input_ids[:, s:][0]))

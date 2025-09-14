@@ -1,5 +1,5 @@
-from transformers import PreTrainedModel, PretrainedConfig, AutoTokenizer, AutoModelForCausalLM
-from transformers import AutoProcessor, AutoModel
+from transformers import PreTrainedModel, PretrainedConfig
+from modelscope import AutoConfig, AutoProcessor, AutoModel, AutoTokenizer, AutoModelForCausalLM
 import torch
 import torch.nn as nn
 from transformers.modeling_outputs import CausalLMOutputWithPast
@@ -13,12 +13,15 @@ class VLMConfig(PretrainedConfig):
                  freeze_vision_model=False,
                  freeze_llm_model=False,
                  image_pad_num=49,
+                 training_scratch=True,
                  **kwargs):
         self.vision_model_path = vision_model_path
         self.llm_model_path = llm_model_path
         self.freeze_vision_model = freeze_vision_model
         self.freeze_llm_model = freeze_llm_model
         self.image_pad_num = image_pad_num
+        self.freeze_vision_model = freeze_vision_model
+        self.training_scratch = training_scratch
         super().__init__(**kwargs)
 
 
@@ -28,13 +31,22 @@ class VLM(PreTrainedModel):
     def __init__(self, config):
         super().__init__(config)
         self.config = config
-        self.vision_model = AutoModel.from_pretrained(self.config.vision_model_path, low_cpu_mem_usage=True,
-                                                      dtype=torch.bfloat16, attn_implementation="flash_attention_2")
+
+        if self.config.training_scratch:
+            self.vision_model = AutoModel.from_pretrained(self.config.vision_model_path, low_cpu_mem_usage=True,
+                                                          dtype=torch.bfloat16, attn_implementation="flash_attention_2")
+            self.llm_model = AutoModelForCausalLM.from_pretrained(self.config.llm_model_path, low_cpu_mem_usage=True,
+                                                                  dtype=torch.bfloat16,
+                                                                  attn_implementation="flash_attention_2")
+        else:
+            vision_config = AutoConfig.from_pretrained(self.config.vision_model_path)
+            self.vision_model = AutoModel.from_config(vision_config, attn_implementation="sdpa", dtype=torch.bfloat16)
+            llm_config = AutoConfig.from_pretrained(self.config.llm_model_path)
+            self.llm_model = AutoModelForCausalLM.from_config(llm_config, attn_implementation="sdpa", dtype=torch.bfloat16)
+
         self.processor = AutoProcessor.from_pretrained(self.config.vision_model_path)
-        self.llm_model = AutoModelForCausalLM.from_pretrained(self.config.llm_model_path, low_cpu_mem_usage=True,
-                                                              dtype=torch.bfloat16,
-                                                              attn_implementation="flash_attention_2")
         self.tokenizer = AutoTokenizer.from_pretrained(self.config.llm_model_path, use_fast=True)
+
         if self.tokenizer.pad_token is None:
             self.tokenizer.pad_token = self.tokenizer.eos_token
         if '<|image_pad|>' not in self.tokenizer.get_vocab():
@@ -96,4 +108,3 @@ class VLM(PreTrainedModel):
         inputs_embeds[batch_indices, image_indices] = image_features.view(-1, embed_dim)
 
         return inputs_embeds
-

@@ -26,7 +26,7 @@ QwenoV3 结合了强大的 DINOv3 视觉编码器和高效的 Qwen3 语言模型
 
 首先，请确保您已安装所需的 Python 库。
 ```bash
-pip install streamlit torch transformers Pillow
+pip install -r requirements.txt
 ```
 
 ### 2. 下载模型权重
@@ -57,6 +57,7 @@ streamlit run StreamlitUI.py
 ## 📊 训练详情
 
 更多训练细节请访问: [SwanLab](https://swanlab.cn/@tian_ye/MySmallVLM?utm_source=website_qr&utm_medium=qr_scan)
+
 
 
 

@@ -10,7 +10,7 @@ if __name__ == '__main__':
     accelerator = Accelerator()
     config = VLMConfig()
     model_path = '/root/autodl-tmp/code/save/pretrain'
-    AutoConfig.register("vlm_model", VLMConfig)
+    AutoConfig.register("Qwenov3", VLMConfig)
     AutoModelForCausalLM.register(VLMConfig, VLM)
     model = AutoModelForCausalLM.from_pretrained(model_path, low_cpu_mem_usage=True, dtype=torch.bfloat16)
 
@@ -57,4 +57,5 @@ if __name__ == '__main__':
 
     trainer.train(resume_from_checkpoint=False)
     trainer.save_model(f'{output_dir}/sft')
+
 

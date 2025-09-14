@@ -13,7 +13,7 @@ if __name__ == '__main__':
     if accelerator.is_main_process:
         print(model)
         print(f'模型参数量为：{sum(p.numel() for p in model.parameters() if p.requires_grad)}')
-    data_path = '/root/autodl-tmp/Dataset/llava'
+    data_path = 'lmms-lab/LLaVA-NeXT-Data'
     tokenizer = model.tokenizer
     processor = model.processor
     output_dir = 'save/'
@@ -35,13 +35,10 @@ if __name__ == '__main__':
         use_liger_kernel=True,
         warmup_ratio=0.1,
         report_to="none",
-        ddp_timeout=180000000,
     )
     swanlab_callback = SwanLabCallback(
         project="MySmallVLM",
         experiment_name="SmallVLM_checkpoint",
-        resume=True,
-        id="6lba8h1vdzwy13s574ll2",
     )
     trainer = Trainer(
         model=model,
@@ -51,6 +48,5 @@ if __name__ == '__main__':
         callbacks=[swanlab_callback],
     )
 
-    trainer.train(resume_from_checkpoint=True)
-    trainer.save_model('save/pretrain')
-    trainer.save_state()
+    trainer.train(resume_from_checkpoint=False)
+    trainer.save_model(f'{output_dir}/pretrain')

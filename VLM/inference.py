@@ -9,7 +9,7 @@ model_path = ''
 AutoConfig.register("Qwenov3", VLMConfig)
 AutoModelForCausalLM.register(VLMConfig, VLM)
 
-model = AutoModelForCausalLM.from_pretrained(model_path, low_cpu_mem_usage=True, dtype=torch.bfloat16).to(device)
+model = AutoModelForCausalLM.from_pretrained(model_path, low_cpu_mem_usage=True, dtype=torch.bfloat16, trust_remote_code=True).to(device)
 model.eval()
 processor = model.processor
 tokenizer = model.tokenizer
@@ -17,10 +17,12 @@ tokenizer = model.tokenizer
 q_text = tokenizer.apply_chat_template(
     [
         {"role": "system", "content": 'You are a helpful assistant.'},
-        {"role": "user", "content": '<image>\n描述图片内容。'}
+        {"role": "user", "content": '<image>\n用中文描述图片内容。'}
     ],
     tokenize=False,
-    add_generation_prompt=True, enable_thinking=False).replace('<image>', '<|vision_start|>' + '<|image_pad|>' * model.config.image_pad_num + '<|vision_end|>')
+    add_generation_prompt=True,
+    enable_thinking=False).replace('<image>', '<|vision_start|>' + '<|image_pad|>' * model.config.image_pad_num + '<|vision_end|>')
+
 
 input_ids = tokenizer(q_text, return_tensors='pt')['input_ids'].to(device)
 

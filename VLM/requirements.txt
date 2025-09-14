@@ -1,0 +1,9 @@
+torch>=2.7.0
+torchvision>=0.22.0
+datasets
+Pillow
+transformers
+accelerate
+swanlab
+streamlit==1.45.0
+modelscope

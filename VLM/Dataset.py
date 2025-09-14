@@ -38,7 +38,7 @@ def find_assistant_tokens(tokenizer, target):
 class MyDataset(Dataset):
     def __init__(self, data_paths, tokenizer, processor, config):
         super().__init__()
-        datasets_list = [load_dataset(data_paths, cache_dir='/root/autodl-tmp/Dataset/llava-cache')['train']]
+        datasets_list = [load_dataset(data_paths)['train']]
         self.datas = concatenate_datasets(datasets_list).shuffle(seed=42)
         self.tokenizer = tokenizer
         self.processor = processor
@@ -53,7 +53,7 @@ class MyDataset(Dataset):
         conversations = sample['conversations']
         messages = [{"role": "system", "content": 'You are a helpful assistant.'}]
         if image is not None:
-            image = image.resize((384, 384), Resampling.BILINEAR).convert('RGB')
+            image = image.resize((224, 224), Resampling.BILINEAR).convert('RGB')
         else:
             image = Image.new('RGB', (224, 224), color='white')
 
@@ -98,3 +98,4 @@ class MyDataCollator(DataCollatorForSeq2Seq):
         batch = super().__call__(features, return_tensors)
         batch["pixel_values"] = pixel_values
         return batch
+

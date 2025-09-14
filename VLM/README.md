@@ -19,11 +19,12 @@ SmallVLM结合了DINOv3视觉编码器和Qwen语言模型，实现了多模态�
 
 模型权重下载地址：
 
-[pretrain](https://pan.baidu.com/s/1NtG0ElpOmgH5GxZey9jX7w?pwd=yu4v)
+[pretrain](https://pan.baidu.com/s/1aOOU09OFepzQEO7rzkMUCQ?pwd=kven)
 
-[SFT](https://pan.baidu.com/s/1qiF7-rUEMws-oxjlBv6zuQ?pwd=cjc4)
+[SFT](https://pan.baidu.com/s/1qn8rTpPoLs2WGlsJ5kw-2g?pwd=t1uh)
 
 训练详情：[SwanLab](https://swanlab.cn/@tian_ye/MySmallVLM?utm_source=website_qr&utm_medium=qr_scan)
+
 
 
 

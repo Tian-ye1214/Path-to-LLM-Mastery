@@ -9,7 +9,7 @@ from Dataset import MyDataset, MyDataCollator
 if __name__ == '__main__':
     accelerator = Accelerator()
     config = VLMConfig()
-    model_path = '/root/autodl-tmp/code/save/pretrain'
+    model_path = ''
     AutoConfig.register("Qwenov3", VLMConfig)
     AutoModelForCausalLM.register(VLMConfig, VLM)
     model = AutoModelForCausalLM.from_pretrained(model_path, low_cpu_mem_usage=True, dtype=torch.bfloat16)
@@ -17,7 +17,7 @@ if __name__ == '__main__':
     if accelerator.is_main_process:
         print(model)
         print(f'模型参数量为：{sum(p.numel() for p in model.parameters() if p.requires_grad)}')
-    data_path = '/root/autodl-tmp/Dataset/llava'
+    data_path = 'lmms-lab/LLaVA-NeXT-Data'
     tokenizer = model.tokenizer
     processor = model.processor
 
@@ -26,13 +26,13 @@ if __name__ == '__main__':
     args = TrainingArguments(
         output_dir=output_dir,
         do_train=True,
-        per_device_train_batch_size=1,
+        per_device_train_batch_size=2,
         learning_rate=6e-5,
         num_train_epochs=1,
         save_strategy='steps',
         save_steps=379,
         bf16=True,
-        gradient_accumulation_steps=256,
+        gradient_accumulation_steps=128,
         logging_steps=30,
         logging_strategy='steps',
         logging_dir=f'{output_dir}/logs',
@@ -44,8 +44,6 @@ if __name__ == '__main__':
     swanlab_callback = SwanLabCallback(
         project="MySmallVLM",
         experiment_name="multi_conversation",
-        resume=True,
-        id="5sld7un7a6ilaz9myc7mp",
     )
     trainer = Trainer(
         model=model,
@@ -57,5 +55,3 @@ if __name__ == '__main__':
 
     trainer.train(resume_from_checkpoint=False)
     trainer.save_model(f'{output_dir}/sft')
-
-

@@ -6,10 +6,10 @@ from transformers.modeling_outputs import CausalLMOutputWithPast
 
 
 class VLMConfig(PretrainedConfig):
-    model_type = "vlm_model"
+    model_type = "Qwenov3"
 
-    def __init__(self, llm_model_path='/root/autodl-tmp/ModelCheckpoint/Qwen3',
-                 vision_model_path='/root/autodl-tmp/ModelCheckpoint/Dinov3',
+    def __init__(self, llm_model_path='Qwen/Qwen3-0.6B',
+                 vision_model_path='facebook/dinov3-vitl16-pretrain-lvd1689m',
                  freeze_vision_model=False,
                  freeze_llm_model=False,
                  image_pad_num=49,
@@ -96,3 +96,4 @@ class VLM(PreTrainedModel):
         inputs_embeds[batch_indices, image_indices] = image_features.view(-1, embed_dim)
 
         return inputs_embeds
+

@@ -29,16 +29,16 @@ This will run the evaluation using the example files provided in the `examples/`
 
 ```
 === Evaluation ===
-BLEU-1: 0.3797
-BLEU-2: 0.2012
-BLEU-3: 0.0775
-BLEU-4: 0.0252
-CIDEr: 0.4786
-GLEU: 0.1108
-METEOR: 0.3226
-NIST: 1.3818
-RIBES: 0.3126
-ROUGE: 0.3053
+BLEU-1: 0.3252
+BLEU-2: 0.1679
+BLEU-3: 0.0639
+BLEU-4: 0.0322
+CIDEr: 0.8789
+GLEU: 0.2729
+METEOR: 0.4452
+NIST: 1.7438
+RIBES: 0.4018
+ROUGE: 0.6668
 chrF: 0.3459
 chrF++: 0.3276
 ```

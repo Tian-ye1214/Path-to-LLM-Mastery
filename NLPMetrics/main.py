@@ -8,11 +8,12 @@ import sacrebleu
 from tqdm import tqdm
 import nltk
 import jieba
+import string
 nltk.download('wordnet')
 
 
 class TextEvaluator:
-    def __init__(self, all_evaluation_indicators=None, include_chinese=False):
+    def __init__(self, all_evaluation_indicators=None):
         self.pred_data = None
         self.truth_data = None
         if all_evaluation_indicators is None:
@@ -25,7 +26,7 @@ class TextEvaluator:
             'CIDEr': Cider(),
             'ROUGE': Rouge()
         }
-        self.include_chinese = include_chinese
+        self.punctuation = string.punctuation + "，。！？【】（）《》“”‘’；：——@#￥%……&*{}、|/·~"
 
     def load_data(self, truth_path, pred_path):
         with open(truth_path, 'r', encoding='utf-8') as f:
@@ -38,8 +39,8 @@ class TextEvaluator:
         hypothesis_scores = []
         for hyp in hypotheses:
             for reference in references:
-                res_token = [res for res in jieba.cut(reference)]
-                hyp_tokens = [res for res in jieba.cut(hyp)]
+                res_token = [res for res in jieba.cut(reference) if res.strip() and res not in self.punctuation]
+                hyp_tokens = [h for h in jieba.cut(hyp) if h.strip() and h not in self.punctuation]
                 metric_scores = {
                     'METEOR': meteor_score.meteor_score([res_token], hyp_tokens),
                     'GLEU': gleu_score.sentence_gleu([res_token], hyp_tokens),

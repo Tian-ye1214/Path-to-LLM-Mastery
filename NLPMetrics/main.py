@@ -9,6 +9,10 @@ from tqdm import tqdm
 import nltk
 import jieba
 import string
+import matplotlib.pyplot as plt
+import os
+from scipy.stats import skew, kurtosis
+import seaborn as sns
 nltk.download('wordnet')
 
 
@@ -17,7 +21,7 @@ class TextEvaluator:
         self.pred_data = None
         self.truth_data = None
         if all_evaluation_indicators is None:
-            all_evaluation_indicators = ['METEOR', 'RIBES', 'GLEU', 'NIST', 'chrF', 'chrF++', 'BLEU-1', 'BLEU-2', 
+            all_evaluation_indicators = ['METEOR', 'RIBES', 'GLEU', 'NIST', 'chrF', 'chrF++', 'BLEU-1', 'BLEU-2',
                                          'BLEU-3', 'BLEU-4', 'CIDEr', 'ROUGE']
         self.all_evaluation_indicators = all_evaluation_indicators
         self.metrics = {}
@@ -41,18 +45,24 @@ class TextEvaluator:
             for reference in references:
                 res_token = [res for res in jieba.cut(reference) if res.strip() and res not in self.punctuation]
                 hyp_tokens = [h for h in jieba.cut(hyp) if h.strip() and h not in self.punctuation]
-                metric_scores = {
-                    'METEOR': meteor_score.meteor_score([res_token], hyp_tokens),
-                    'GLEU': gleu_score.sentence_gleu([res_token], hyp_tokens),
-                    'chrF': sacrebleu.sentence_chrf(hypothesis=hyp, references=[reference]).score / 100.0,
-                    'chrF++': sacrebleu.sentence_chrf(hypothesis=hyp, references=[reference], word_order=2).score / 100.0,
-                    'NIST': nist_score.sentence_nist([res_token], hyp_tokens),
-                    'RIBES': ribes_score.sentence_ribes([res_token], hyp_tokens)
-                }
+                gts = {'caption': [' '.join(res_token)]}
+                res = {'caption': [' '.join(hyp_tokens)]}
+
+                metric_scores = {}
+                if 'METEOR' in self.all_evaluation_indicators:
+                    metric_scores['METEOR'] = meteor_score.meteor_score([res_token], hyp_tokens)
+                if 'GLEU' in self.all_evaluation_indicators:
+                    metric_scores['GLEU'] = gleu_score.sentence_gleu([res_token], hyp_tokens)
+                if 'chrF' in self.all_evaluation_indicators:
+                    metric_scores['chrF'] = sacrebleu.sentence_chrf(hypothesis=hyp, references=[reference]).score / 100.0
+                if 'chrF++' in self.all_evaluation_indicators:
+                    metric_scores['chrF++'] = sacrebleu.sentence_chrf(hypothesis=hyp, references=[reference], word_order=2).score / 100.0
+                if 'RIBES' in self.all_evaluation_indicators:
+                    metric_scores['RIBES'] = ribes_score.sentence_ribes([reference], hyp)
+                if 'NIST' in self.all_evaluation_indicators:
+                    metric_scores['NIST'] = nist_score.sentence_nist([res_token], hyp_tokens)
 
                 for scorer_name, scorer in self.scorers.items():
-                    gts = {'caption': [' '.join(jieba.cut(reference))]}
-                    res = {'caption': [' '.join(jieba.cut(hyp))]}
                     score_value, _ = scorer.compute_score(gts, res)
 
                     if scorer_name == 'BLEU':
@@ -64,8 +74,43 @@ class TextEvaluator:
                 hypothesis_scores.append(metric_scores)
 
         for metric in self.all_evaluation_indicators:
-            scores[metric] = np.max([h_score[metric] for h_score in hypothesis_scores])
+            scores[metric] = np.max([h_score.get(metric, 0) for h_score in hypothesis_scores])
         return scores
+
+    def plot_metrics(self, sentence_scores):
+        output_dir = 'plots'
+        if not os.path.exists(output_dir):
+            os.makedirs(output_dir)
+
+        for metric_name, scores in sentence_scores.items():
+            if not scores:
+                continue
+
+            fig, ax = plt.subplots(figsize=(8, 6))
+            sns.violinplot(ax=ax, x=[metric_name]*len(scores), y=scores, hue=[metric_name]*len(scores), palette="muted", legend=False)
+            ax.set_title(f'{metric_name} Violin Plot')
+            ax.set_ylabel('Score')
+            ax.set_xlabel('')
+
+            stats_text = (
+                f"Maximum: {np.max(scores):.4f}\n"
+                f"Minimum: {np.min(scores):.4f}\n"
+                f"Average: {np.mean(scores):.4f}\n"
+                f"Variance: {np.var(scores):.4f}\n"
+                f"Median: {np.median(scores):.4f}\n"
+                f"Std Dev: {np.std(scores):.4f}\n"
+                f"Skewness: {skew(scores):.4f}\n"
+                f"Kurtosis: {kurtosis(scores):.4f}"
+            )
+
+            props = dict(boxstyle='round', facecolor='wheat', alpha=0.5)
+            ax.text(0.95, 0.95, stats_text, transform=ax.transAxes, fontsize=10,
+                    verticalalignment='top', horizontalalignment='right', bbox=props)
+
+            safe_metric_name = "".join(c for c in metric_name if c.isalnum() or c in ('-', '_')).rstrip()
+            plot_path = os.path.join(output_dir, f'{safe_metric_name}_violinplot.png')
+            plt.savefig(plot_path)
+            plt.close(fig)
 
     def evaluate(self, truth_path, pred_path):
         self.load_data(truth_path, pred_path)
@@ -82,6 +127,7 @@ class TextEvaluator:
             metric: np.mean(scores)
             for metric, scores in sentence_scores.items()
         })
+        self.plot_metrics(sentence_scores)
 
         return self.metrics
 
@@ -92,8 +138,7 @@ class TextEvaluator:
 
 
 if __name__ == "__main__":
-    truth_path = 'examples/original_captions.json'
-    pred_path = 'examples/generated_captions.json'
-    evaluator = TextEvaluator()
-    metrics = evaluator.evaluate(truth_path, pred_path)
+    evaluator = TextEvaluator(all_evaluation_indicators=['METEOR', 'GLEU', 'NIST', 'chrF', 'chrF++', 'BLEU-1', 'BLEU-2',
+                                         'BLEU-3', 'BLEU-4', 'CIDEr', 'ROUGE'])
+    metrics = evaluator.evaluate('examples/original_captions.json', 'examples/generated_captions.json')
     evaluator.print_results()

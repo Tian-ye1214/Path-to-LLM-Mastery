@@ -2,8 +2,10 @@ numpy~=1.26.4
 sacrebleu~=2.5.1
 pycocoevalcap~=1.2
 nltk~=3.9.1
-jieba
+jieba~=0.42.1
+matplotlib~=3.10.6
+scipy~=1.13.1
+seaborn~=0.13.2
 
 # Optional
-
 tqdm~=4.66.5

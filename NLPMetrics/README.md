@@ -14,6 +14,7 @@ This toolkit provides a unified interface to calculate the following popular NLP
 - **BLEU (1-4)**
 - **CIDEr**
 - **ROUGE-L**
+- **Translation Edit Rate(TER)**
 
 ## Visualization
 
@@ -37,15 +38,17 @@ This will run the evaluation using the example files provided in the `examples/`
 
 ```
 === Evaluation ===
-BLEU-1: 0.3053
-BLEU-2: 0.1695
-BLEU-3: 0.0776
-BLEU-4: 0.0347
-CIDEr: 1.0286
+BLEU-1: 0.4141
+BLEU-2: 0.2266
+BLEU-3: 0.0972
+BLEU-4: 0.0367
+CIDEr: 0.4841
 GLEU: 0.1247
 METEOR: 0.3863
-NIST: 1.1321
-ROUGE: 0.3340
+NIST: 1.5182
+RIBES: 0.1706
+ROUGE: 0.3408
+TER: 1.1457
 chrF: 0.3459
 chrF++: 0.3276
 ```

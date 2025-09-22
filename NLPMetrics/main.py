@@ -22,7 +22,7 @@ class TextEvaluator:
         self.truth_data = None
         if all_evaluation_indicators is None:
             all_evaluation_indicators = ['METEOR', 'RIBES', 'GLEU', 'NIST', 'chrF', 'chrF++', 'BLEU-1', 'BLEU-2',
-                                         'BLEU-3', 'BLEU-4', 'CIDEr', 'ROUGE']
+                                         'BLEU-3', 'BLEU-4', 'CIDEr', 'ROUGE', 'TER']
         self.all_evaluation_indicators = all_evaluation_indicators
         self.metrics = {}
         self.scorers = {
@@ -38,40 +38,40 @@ class TextEvaluator:
         with open(pred_path, 'r', encoding='utf-8') as f:
             self.pred_data = json.load(f)
 
-    def calculate_metrics(self, references, hypotheses):
+    def calculate_metrics(self, truth, generated):
         scores = {}
         hypothesis_scores = []
-        for hyp in hypotheses:
-            for reference in references:
-                res_token = [res for res in jieba.cut(reference) if res.strip() and res not in self.punctuation]
-                hyp_tokens = [h for h in jieba.cut(hyp) if h.strip() and h not in self.punctuation]
-                gts = {'caption': [' '.join(res_token)]}
-                res = {'caption': [' '.join(hyp_tokens)]}
+        for gene_sentence in generated:
+            res_token = [[res for res in jieba.cut(truth_sentence) if res.strip() and res not in self.punctuation] for truth_sentence in truth]
+            hyp_tokens = [h for h in jieba.cut(gene_sentence) if h.strip() and h not in self.punctuation]
+            gts = {'caption': [' '.join(res) for res in res_token]}
+            res = {'caption': [' '.join(hyp_tokens)]}
 
-                metric_scores = {}
-                if 'METEOR' in self.all_evaluation_indicators:
-                    metric_scores['METEOR'] = meteor_score.meteor_score([res_token], hyp_tokens)
-                if 'GLEU' in self.all_evaluation_indicators:
-                    metric_scores['GLEU'] = gleu_score.sentence_gleu([res_token], hyp_tokens)
-                if 'chrF' in self.all_evaluation_indicators:
-                    metric_scores['chrF'] = sacrebleu.sentence_chrf(hypothesis=hyp, references=[reference]).score / 100.0
-                if 'chrF++' in self.all_evaluation_indicators:
-                    metric_scores['chrF++'] = sacrebleu.sentence_chrf(hypothesis=hyp, references=[reference], word_order=2).score / 100.0
-                if 'RIBES' in self.all_evaluation_indicators:
-                    metric_scores['RIBES'] = ribes_score.sentence_ribes([reference], hyp)
-                if 'NIST' in self.all_evaluation_indicators:
-                    metric_scores['NIST'] = nist_score.sentence_nist([res_token], hyp_tokens)
+            metric_scores = {}
+            if 'METEOR' in self.all_evaluation_indicators:
+                metric_scores['METEOR'] = meteor_score.meteor_score(res_token, hyp_tokens)
+            if 'GLEU' in self.all_evaluation_indicators:
+                metric_scores['GLEU'] = gleu_score.sentence_gleu(res_token, hyp_tokens)
+            if 'NIST' in self.all_evaluation_indicators:
+                metric_scores['NIST'] = nist_score.sentence_nist(res_token, hyp_tokens)
+            if 'RIBES' in self.all_evaluation_indicators:
+                metric_scores['RIBES'] = ribes_score.sentence_ribes([truth_sentence for truth_sentence in truth], gene_sentence)
+            if 'chrF' in self.all_evaluation_indicators:
+                metric_scores['chrF'] = sacrebleu.sentence_chrf(hypothesis=gene_sentence, references=[truth_sentence for truth_sentence in truth]).score / 100.0
+            if 'chrF++' in self.all_evaluation_indicators:
+                metric_scores['chrF++'] = sacrebleu.sentence_chrf(hypothesis=gene_sentence, references=[truth_sentence for truth_sentence in truth], word_order=2).score / 100.0
+            if 'TER' in self.all_evaluation_indicators:
+                metric_scores['TER'] = sacrebleu.sentence_ter(hypothesis=gene_sentence, references=[truth_sentence for truth_sentence in truth]).score / 100.0
 
-                for scorer_name, scorer in self.scorers.items():
-                    score_value, _ = scorer.compute_score(gts, res)
+            for scorer_name, scorer in self.scorers.items():
+                score_value, _ = scorer.compute_score(gts, res)
+                if scorer_name == 'BLEU':
+                    for j, bleu_score in enumerate(score_value, start=1):
+                        metric_scores[f'BLEU-{j}'] = bleu_score
+                else:
+                    metric_scores[scorer_name] = score_value
 
-                    if scorer_name == 'BLEU':
-                        for j, bleu_score in enumerate(score_value, start=1):
-                            metric_scores[f'BLEU-{j}'] = bleu_score
-                    else:
-                        metric_scores[scorer_name] = score_value
-
-                hypothesis_scores.append(metric_scores)
+            hypothesis_scores.append(metric_scores)
 
         for metric in self.all_evaluation_indicators:
             scores[metric] = np.max([h_score.get(metric, 0) for h_score in hypothesis_scores])
@@ -116,10 +116,10 @@ class TextEvaluator:
         self.load_data(truth_path, pred_path)
         sentence_scores = {metric: [] for metric in self.all_evaluation_indicators}
 
-        for key, refs in tqdm(self.truth_data.items(), desc='calculating metrics'):
+        for key, truths in tqdm(self.truth_data.items(), desc='calculating metrics'):
             if key in self.pred_data:
-                hyps = self.pred_data[key]
-                scores = self.calculate_metrics(refs, hyps)
+                generated = self.pred_data[key]
+                scores = self.calculate_metrics(truths, generated)
                 for metric, score in scores.items():
                     sentence_scores[metric].append(score)
 
@@ -138,7 +138,6 @@ class TextEvaluator:
 
 
 if __name__ == "__main__":
-    evaluator = TextEvaluator(all_evaluation_indicators=['METEOR', 'GLEU', 'NIST', 'chrF', 'chrF++', 'BLEU-1', 'BLEU-2',
-                                         'BLEU-3', 'BLEU-4', 'CIDEr', 'ROUGE'])
+    evaluator = TextEvaluator()
     metrics = evaluator.evaluate('examples/original_captions.json', 'examples/generated_captions.json')
     evaluator.print_results()

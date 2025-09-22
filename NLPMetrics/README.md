@@ -15,6 +15,14 @@ This toolkit provides a unified interface to calculate the following popular NLP
 - **CIDEr**
 - **ROUGE-L**
 
+## Visualization
+
+The toolkit automatically generates violin plots for each metric, showing the distribution of scores across all evaluated samples. Here's an example of the BLEU-1 metric visualization:
+
+![BLEU-1 Violin Plot](plots/BLEU-1_violinplot.png)
+
+*The violin plot displays the score distribution, including statistical measures such as mean, median, standard deviation, and other descriptive statistics.*
+
 ## Usage
 
 You can run the evaluation directly from the command line using `main.py`. The script takes two arguments: the path to the ground truth (original) captions and the path to the generated captions.
@@ -29,16 +37,15 @@ This will run the evaluation using the example files provided in the `examples/`
 
 ```
 === Evaluation ===
-BLEU-1: 0.3252
-BLEU-2: 0.1679
-BLEU-3: 0.0639
-BLEU-4: 0.0322
-CIDEr: 0.8789
-GLEU: 0.2729
-METEOR: 0.4452
-NIST: 1.7438
-RIBES: 0.4018
-ROUGE: 0.6668
+BLEU-1: 0.3053
+BLEU-2: 0.1695
+BLEU-3: 0.0776
+BLEU-4: 0.0347
+CIDEr: 1.0286
+GLEU: 0.1247
+METEOR: 0.3863
+NIST: 1.1321
+ROUGE: 0.3340
 chrF: 0.3459
 chrF++: 0.3276
 ```

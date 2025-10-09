@@ -145,7 +145,6 @@ if __name__ == '__main__':
         gradient_checkpointing=False,
         dataloader_num_workers=40,
         use_liger_kernel=True,
-        use_liger_loss=True,
         use_transformers_paged=True,
         cache_implementation="static",
         generation_kwargs={
@@ -165,4 +164,5 @@ if __name__ == '__main__':
     )
     trainer.train()
     trainer.save_model(f'{output_dir}/sft')
+
 

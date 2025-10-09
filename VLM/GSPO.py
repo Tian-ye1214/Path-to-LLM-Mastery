@@ -40,7 +40,7 @@ class VLMProcessingClass(ProcessorMixin):
             processed_images = []
 
             images = [img for img_list in images for img in img_list]
-            
+
             for img in images:
                 if isinstance(img, Image.Image):
                     processed_images.append(img.convert('RGB'))
@@ -50,10 +50,10 @@ class VLMProcessingClass(ProcessorMixin):
                     processed_images.append(Image.open(img).convert('RGB'))
                 elif hasattr(img, 'convert'):
                     processed_images.append(img.convert('RGB'))
-            
+
             if len(processed_images) == 0:
                 raise
-            
+
             image_output = self.processor(images=processed_images, return_tensors="pt")
             result['pixel_values'] = image_output['pixel_values']
 
@@ -118,8 +118,6 @@ if __name__ == '__main__':
     swanlab_callback = SwanLabCallback(
         project="Qwenov3",
         experiment_name="GSPO",
-        resume=True,
-        # id="sosvdwqucl2jjydmrnp41",
     )
 
     training_args = GRPOConfig(
@@ -128,31 +126,40 @@ if __name__ == '__main__':
         loss_type="grpo",
         beta=0.04,
         epsilon=3e-4,
-        learning_rate=1e-5,
-        remove_unused_columns=False,  # to access the solution column in accuracy_reward
+        learning_rate=5e-6,
+        remove_unused_columns=False, 
         num_train_epochs=3,
         bf16=True,
         per_device_train_batch_size=2,
-        gradient_accumulation_steps=8,
-        use_liger_kernel=True,
+        gradient_accumulation_steps=32,
         warmup_ratio=0.05,
-        max_completion_length=4096,  # default: 256
-        num_generations=8,  # default: 8
+        max_completion_length=3072,
+        num_generations=4,
         max_prompt_length=512,
-        logging_steps=10,
+        logging_steps=1,
         save_strategy="epoch",
         temperature=0.6,
-        top_p=0.9,
+        top_p=0.95,
         top_k=20,
         min_p=0.0,
         gradient_checkpointing=False,
+        dataloader_num_workers=40,
+        use_liger_kernel=True,
+        use_liger_loss=True,
+        use_transformers_paged=True,
+        cache_implementation="static",
+        generation_kwargs={
+            "use_cache": True,
+            "pad_token_id": tokenizer.pad_token_id,
+            "eos_token_id": tokenizer.eos_token_id,
+        },
     )
 
     trainer = GRPOTrainer(
         model=model,
         reward_funcs=[reward_num_unique_chars, format_reward, accuracy_reward],
         args=training_args,
-        processing_class=processing_class,  # 添加自定义处理类
+        processing_class=processing_class,
         train_dataset=train_dataset,
         callbacks=[swanlab_callback],
     )

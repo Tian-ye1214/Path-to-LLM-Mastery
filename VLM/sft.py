@@ -2,22 +2,22 @@ from accelerate import Accelerator
 from transformers import AutoModelForCausalLM, AutoConfig, Trainer, TrainingArguments
 import torch
 from swanlab.integration.transformers import SwanLabCallback
-from VLMConfig import VLMConfig, VLM
+from Qwenov3Config import Qwenov3Config, Qwenov3
 from Dataset import MyDataset, MyDataCollator
 
 
 if __name__ == '__main__':
     accelerator = Accelerator()
-    config = VLMConfig()
-    model_path = ''
-    AutoConfig.register("Qwenov3", VLMConfig)
-    AutoModelForCausalLM.register(VLMConfig, VLM)
+    config = Qwenov3Config()
+    model_path = '/root/autodl-tmp/code/save/pretrain'
+    AutoConfig.register("Qwenov3", Qwenov3Config)
+    AutoModelForCausalLM.register(Qwenov3Config, Qwenov3)
     model = AutoModelForCausalLM.from_pretrained(model_path, low_cpu_mem_usage=True, dtype=torch.bfloat16)
 
     if accelerator.is_main_process:
         print(model)
         print(f'模型参数量为：{sum(p.numel() for p in model.parameters() if p.requires_grad)}')
-    data_path = 'lmms-lab/LLaVA-NeXT-Data'
+    data_path = '/root/autodl-tmp/Dataset/llava'
     tokenizer = model.tokenizer
     processor = model.processor
 
@@ -49,9 +49,10 @@ if __name__ == '__main__':
         model=model,
         args=args,
         train_dataset=MyDataset(data_path, tokenizer, processor, config),
-        data_collator=MyDataCollator(tokenizer=tokenizer, model=model, label_pad_token_id=tokenizer.pad_token_id, pad_to_multiple_of=32),
+        data_collator=MyDataCollator(tokenizer=tokenizer, model=model, label_pad_token_id=tokenizer.pad_token_id, pad_to_multiple_of=8),
         callbacks=[swanlab_callback],
     )
 
     trainer.train(resume_from_checkpoint=False)
     trainer.save_model(f'{output_dir}/sft')
+

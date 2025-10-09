@@ -3,12 +3,12 @@ import torch
 from transformers import AutoModelForCausalLM, TextIteratorStreamer, AutoConfig
 import gc
 from threading import Thread
-from VLMConfig import VLMConfig, VLM
+from Qwenov3Config import Qwenov3Config, Qwenov3
 from PIL import Image
 
 MODEL_MAPPING = {
-    'QwenoV3-Pretrain': '',
-    'QwenoV3-SFT': '',
+    'QwenoV3-Pretrain': 'G:/代码/ModelWeight/Qweno3-pretrain',
+    'QwenoV3-SFT': 'G:/代码/ModelWeight/Qweno3-sft',
 }
 
 
@@ -147,8 +147,8 @@ def parameter_settings():
             unload_model()
             try:
                 with st.spinner('加载模型中...'):
-                    AutoConfig.register("Qwenov3", VLMConfig)
-                    AutoModelForCausalLM.register(VLMConfig, VLM)
+                    AutoConfig.register("Qwenov3", Qwenov3Config)
+                    AutoModelForCausalLM.register(Qwenov3Config, Qwenov3)
                     st.session_state.model = AutoModelForCausalLM.from_pretrained(
                         st.session_state.model_path,
                         torch_dtype=torch.bfloat16,

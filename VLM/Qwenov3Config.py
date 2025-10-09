@@ -5,7 +5,7 @@ import torch.nn as nn
 from transformers.modeling_outputs import CausalLMOutputWithPast
 
 
-class VLMConfig(PretrainedConfig):
+class Qwenov3Config(PretrainedConfig):
     model_type = "Qwenov3"
 
     def __init__(self, llm_model_path='Qwen/Qwen3-0.6B',
@@ -13,7 +13,7 @@ class VLMConfig(PretrainedConfig):
                  freeze_vision_model=False,
                  freeze_llm_model=False,
                  image_pad_num=49,
-                 training_scratch=True,
+                 training_scratch=False,
                  **kwargs):
         self.vision_model_path = vision_model_path
         self.llm_model_path = llm_model_path
@@ -25,8 +25,8 @@ class VLMConfig(PretrainedConfig):
         super().__init__(**kwargs)
 
 
-class VLM(PreTrainedModel):
-    config_class = VLMConfig
+class Qwenov3(PreTrainedModel):
+    config_class = Qwenov3Config
 
     def __init__(self, config):
         super().__init__(config)

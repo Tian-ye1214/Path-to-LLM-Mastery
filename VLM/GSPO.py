@@ -1,4 +1,4 @@
-from transformers import AutoModelForCausalLM, AutoConfig, ProcessorMixin
+from transformers import AutoModelForCausalLM, AutoConfig, ProcessorMixin, BatchEncoding
 import torch
 from swanlab.integration.transformers import SwanLabCallback
 from Qwenov3Config import Qwenov3, Qwenov3Config
@@ -57,7 +57,7 @@ class VLMProcessingClass(ProcessorMixin):
             image_output = self.processor(images=processed_images, return_tensors="pt")
             result['pixel_values'] = image_output['pixel_values']
 
-        return result
+        return BatchEncoding(result)
 
     def apply_chat_template(self, *args, **kwargs):
         return self.tokenizer.apply_chat_template(*args, **kwargs)
@@ -89,7 +89,7 @@ def make_conversation(example):
         },
     ]
     prompt = (tokenizer.apply_chat_template(
-        conversation, tokenize=False, add_generation_prompt=True, enable_thinking=False)
+        conversation, tokenize=False, add_generation_prompt=True, enable_thinking=True)
               .replace('<image>', '<|vision_start|>' + '<|image_pad|>' * config.image_pad_num + '<|vision_end|>')
               )
 
@@ -106,6 +106,20 @@ if __name__ == '__main__':
     AutoModelForCausalLM.register(Qwenov3Config, Qwenov3)
 
     model = AutoModelForCausalLM.from_pretrained(model_path, low_cpu_mem_usage=True, dtype=torch.bfloat16)
+
+    # Option
+    from peft import LoraConfig, get_peft_model
+    lora_config = LoraConfig(
+        target_modules=["q_proj", "v_proj", "k_proj", "o_proj", "gate_proj", "up_proj", "down_proj"],
+        task_type="CAUSAL_LM",
+        r=8,
+        lora_alpha=32,
+        lora_dropout=0.1,
+    )
+
+    model = get_peft_model(model, lora_config)
+    model.print_trainable_parameters()
+
     processor = model.processor
     tokenizer = model.tokenizer
 
@@ -118,6 +132,8 @@ if __name__ == '__main__':
     swanlab_callback = SwanLabCallback(
         project="Qwenov3",
         experiment_name="GSPO",
+        # resume=True,
+        # id="sosvdwqucl2jjydmrnp41",
     )
 
     training_args = GRPOConfig(
@@ -127,15 +143,15 @@ if __name__ == '__main__':
         beta=0.04,
         epsilon=3e-4,
         learning_rate=5e-6,
-        remove_unused_columns=False, 
-        num_train_epochs=3,
+        remove_unused_columns=False,
+        num_train_epochs=2,
         bf16=True,
         per_device_train_batch_size=2,
         gradient_accumulation_steps=32,
         warmup_ratio=0.05,
-        max_completion_length=3072,
+        max_completion_length=2048,
         num_generations=4,
-        max_prompt_length=512,
+        max_prompt_length=None,
         logging_steps=1,
         save_strategy="epoch",
         temperature=0.6,
@@ -143,15 +159,9 @@ if __name__ == '__main__':
         top_k=20,
         min_p=0.0,
         gradient_checkpointing=False,
-        dataloader_num_workers=40,
+        dataloader_num_workers=12,
         use_liger_kernel=True,
-        use_transformers_paged=True,
-        cache_implementation="static",
-        generation_kwargs={
-            "use_cache": True,
-            "pad_token_id": tokenizer.pad_token_id,
-            "eos_token_id": tokenizer.eos_token_id,
-        },
+        report_to="none",
     )
 
     trainer = GRPOTrainer(
@@ -163,6 +173,11 @@ if __name__ == '__main__':
         callbacks=[swanlab_callback],
     )
     trainer.train()
-    trainer.save_model(f'{output_dir}/sft')
+    trainer.save_model(f'{output_dir}/lora_adapter')
 
+    merged_model = model.merge_and_unload()
+    merged_output_dir = f'{output_dir}/merged_model'
+    merged_model.save_pretrained(merged_output_dir)
+    tokenizer.save_pretrained(merged_output_dir)
+    processor.save_pretrained(merged_output_dir)
 

@@ -7,8 +7,8 @@ from Qwenov3Config import Qwenov3Config, Qwenov3
 from PIL import Image
 
 MODEL_MAPPING = {
-    'QwenoV3-Pretrain': 'G:/代码/ModelWeight/Qweno3-pretrain',
-    'QwenoV3-SFT': 'G:/代码/ModelWeight/Qweno3-sft',
+    'QwenoV3-Pretrain': '',
+    'QwenoV3-SFT': '',
 }
 
 

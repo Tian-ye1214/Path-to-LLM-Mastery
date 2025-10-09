@@ -1,4 +1,4 @@
-from transformers import PreTrainedModel, PretrainedConfig
+from transformers import PreTrainedModel, PretrainedConfig, GenerationMixin
 from modelscope import AutoConfig, AutoProcessor, AutoModel, AutoTokenizer, AutoModelForCausalLM
 import torch
 import torch.nn as nn
@@ -14,6 +14,10 @@ class Qwenov3Config(PretrainedConfig):
                  freeze_llm_model=False,
                  image_pad_num=49,
                  training_scratch=False,
+                 num_hidden_layers=None,
+                 hidden_size=None,
+                 num_attention_heads=None,
+                 vocab_size=None,
                  **kwargs):
         self.vision_model_path = vision_model_path
         self.llm_model_path = llm_model_path
@@ -22,10 +26,16 @@ class Qwenov3Config(PretrainedConfig):
         self.image_pad_num = image_pad_num
         self.freeze_vision_model = freeze_vision_model
         self.training_scratch = training_scratch
+
+        self.num_hidden_layers = num_hidden_layers
+        self.hidden_size = hidden_size
+        self.num_attention_heads = num_attention_heads
+        self.vocab_size = vocab_size
+        
         super().__init__(**kwargs)
 
 
-class Qwenov3(PreTrainedModel):
+class Qwenov3(GenerationMixin, PreTrainedModel):
     config_class = Qwenov3Config
 
     def __init__(self, config):
@@ -43,6 +53,15 @@ class Qwenov3(PreTrainedModel):
             self.vision_model = AutoModel.from_config(vision_config, attn_implementation="sdpa", dtype=torch.bfloat16)
             llm_config = AutoConfig.from_pretrained(self.config.llm_model_path)
             self.llm_model = AutoModelForCausalLM.from_config(llm_config, attn_implementation="sdpa", dtype=torch.bfloat16)
+
+        if self.config.num_hidden_layers is None:
+            self.config.num_hidden_layers = self.llm_model.config.num_hidden_layers
+        if self.config.hidden_size is None:
+            self.config.hidden_size = self.llm_model.config.hidden_size
+        if self.config.num_attention_heads is None:
+            self.config.num_attention_heads = self.llm_model.config.num_attention_heads
+        if self.config.vocab_size is None:
+            self.config.vocab_size = self.llm_model.config.vocab_size
 
         self.processor = AutoProcessor.from_pretrained(self.config.vision_model_path)
         self.tokenizer = AutoTokenizer.from_pretrained(self.config.llm_model_path, use_fast=True)
@@ -73,7 +92,7 @@ class Qwenov3(PreTrainedModel):
             for param in self.llm_model.parameters():
                 param.requires_grad = False
 
-    def forward(self, input_ids, labels, pixel_values=None, attention_mask=None):
+    def forward(self, input_ids, labels=None, pixel_values=None, attention_mask=None, **kwargs):
         text_embeds = self.llm_model.get_input_embeddings()(input_ids)
 
         if pixel_values is not None:
@@ -96,6 +115,18 @@ class Qwenov3(PreTrainedModel):
                 logits.view(-1, logits.size(-1)), labels.view(-1).to(logits.device)
             )
         return CausalLMOutputWithPast(loss=loss, logits=logits)
+
+    def prepare_inputs_for_generation(self, input_ids, attention_mask=None, pixel_values=None, **kwargs):
+        """准备生成所需的输入"""
+        return {
+            "input_ids": input_ids,
+            "attention_mask": attention_mask,
+            "pixel_values": pixel_values,
+        }
+
+    def can_generate(self):
+        """确认模型可以生成"""
+        return True
 
     def merge_input_ids_with_image_features(self, image_features, inputs_embeds, input_ids):
 

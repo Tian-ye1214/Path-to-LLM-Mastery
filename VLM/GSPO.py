@@ -51,9 +51,6 @@ class VLMProcessingClass(ProcessorMixin):
                 elif hasattr(img, 'convert'):
                     processed_images.append(img.convert('RGB'))
 
-            if len(processed_images) == 0:
-                raise
-
             image_output = self.processor(images=processed_images, return_tensors="pt")
             result['pixel_values'] = image_output['pixel_values']
 
@@ -83,10 +80,7 @@ SYSTEM_PROMPT = (
 def make_conversation(example):
     conversation = [
         {"role": "system", "content": SYSTEM_PROMPT},
-        {
-            "role": "user",
-            "content": '<image>\n' + example["problem"],
-        },
+        {"role": "user", "content": '<image>\n' + example["problem"]},
     ]
     prompt = (tokenizer.apply_chat_template(
         conversation, tokenize=False, add_generation_prompt=True, enable_thinking=True)
@@ -108,17 +102,16 @@ if __name__ == '__main__':
     model = AutoModelForCausalLM.from_pretrained(model_path, low_cpu_mem_usage=True, dtype=torch.bfloat16)
 
     # Option
-    from peft import LoraConfig, get_peft_model
-    lora_config = LoraConfig(
-        target_modules=["q_proj", "v_proj", "k_proj", "o_proj", "gate_proj", "up_proj", "down_proj"],
-        task_type="CAUSAL_LM",
-        r=8,
-        lora_alpha=32,
-        lora_dropout=0.1,
-    )
-
-    model = get_peft_model(model, lora_config)
-    model.print_trainable_parameters()
+    # from peft import LoraConfig, get_peft_model
+    # lora_config = LoraConfig(
+    #     target_modules=["q_proj", "v_proj", "k_proj", "o_proj", "gate_proj", "up_proj", "down_proj"],
+    #     task_type="CAUSAL_LM",
+    #     r=8,
+    #     lora_alpha=32,
+    #     lora_dropout=0.05,
+    # )
+    # model = get_peft_model(model, lora_config)
+    # model.print_trainable_parameters()
 
     processor = model.processor
     tokenizer = model.tokenizer
@@ -132,8 +125,6 @@ if __name__ == '__main__':
     swanlab_callback = SwanLabCallback(
         project="Qwenov3",
         experiment_name="GSPO",
-        # resume=True,
-        # id="sosvdwqucl2jjydmrnp41",
     )
 
     training_args = GRPOConfig(
@@ -146,38 +137,45 @@ if __name__ == '__main__':
         remove_unused_columns=False,
         num_train_epochs=2,
         bf16=True,
-        per_device_train_batch_size=2,
-        gradient_accumulation_steps=32,
+        per_device_train_batch_size=1,
+        gradient_accumulation_steps=64,
         warmup_ratio=0.05,
-        max_completion_length=2048,
+        max_completion_length=4096,
         num_generations=4,
         max_prompt_length=None,
         logging_steps=1,
         save_strategy="epoch",
-        temperature=0.6,
-        top_p=0.95,
-        top_k=20,
-        min_p=0.0,
         gradient_checkpointing=False,
-        dataloader_num_workers=12,
+        dataloader_num_workers=8,
         use_liger_kernel=True,
         report_to="none",
+        use_transformers_paged=False,
+        cache_implementation="dynamic",
+        generation_kwargs={
+            "temperature": 0.6,
+            "top_p": 0.95,
+            "top_k": 20,
+            "min_p": 0.0,
+            "do_sample": True,
+            "use_cache": True,
+            "max_new_tokens": 4096
+        },
     )
 
     trainer = GRPOTrainer(
         model=model,
-        reward_funcs=[reward_num_unique_chars, format_reward, accuracy_reward],
+        reward_funcs=[format_reward, accuracy_reward],
         args=training_args,
         processing_class=processing_class,
         train_dataset=train_dataset,
         callbacks=[swanlab_callback],
     )
     trainer.train()
-    trainer.save_model(f'{output_dir}/lora_adapter')
-
-    merged_model = model.merge_and_unload()
-    merged_output_dir = f'{output_dir}/merged_model'
-    merged_model.save_pretrained(merged_output_dir)
-    tokenizer.save_pretrained(merged_output_dir)
-    processor.save_pretrained(merged_output_dir)
+    trainer.save_model(f'{output_dir}/GSPO')
+    # trainer.save_model(f'{output_dir}/lora_adapter')
+    # merged_model = model.merge_and_unload()
+    # merged_output_dir = f'{output_dir}/merged_model'
+    # merged_model.save_pretrained(merged_output_dir)
+    # tokenizer.save_pretrained(merged_output_dir)
+    # processor.save_pretrained(merged_output_dir)
 

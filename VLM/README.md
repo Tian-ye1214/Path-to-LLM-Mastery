@@ -56,7 +56,8 @@ streamlit run StreamlitUI.py
 
 ## 📊 训练详情
 
-更多训练细节请访问: [SwanLab](https://swanlab.cn/@tian_ye/MySmallVLM?utm_source=website_qr&utm_medium=qr_scan)
+更多训练细节请访问: [SwanLab](https://swanlab.cn/@tian_ye/Qwenov3/overview)
+
 
 
 

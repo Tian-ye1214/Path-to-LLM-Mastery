@@ -8,7 +8,7 @@ from PIL import Image
 
 MODEL_MAPPING = {
     'QwenoV3-Pretrain': '',
-    'QwenoV3-SFT': '',
+    'QwenoV3-SFT': 'TianYeZ1214/Qwenov3',
 }
 
 

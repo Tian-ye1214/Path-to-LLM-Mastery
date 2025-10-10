@@ -53,10 +53,12 @@ streamlit run StreamlitUI.py
 ## 📚 数据集
 
 使用 [LLaVA-NeXT-Data](https://huggingface.co/datasets/lmms-lab/LLaVA-NeXT-Data) 数据集进行单轮问答预训练、多轮问答SFT。
+使用 [lmms-lab/multimodal-open-r1-8k-verified](https://huggingface.co/datasets/lmms-lab/multimodal-open-r1-8k-verified) 数据集进行GSPO训练
 
 ## 📊 训练详情
 
 更多训练细节请访问: [SwanLab](https://swanlab.cn/@tian_ye/Qwenov3/overview)
+
 
 
 

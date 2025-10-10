@@ -65,7 +65,7 @@ class VLMProcessingClass(ProcessorMixin):
         return self.tokenizer.batch_decode(*args, **kwargs)
 
 
-dataset_id = './dataset'
+dataset_id = 'lmms-lab/multimodal-open-r1-8k-verified'
 dataset = load_dataset(dataset_id, split='train')
 
 SYSTEM_PROMPT = (
@@ -94,7 +94,7 @@ def make_conversation(example):
 
 if __name__ == '__main__':
     config = Qwenov3Config()
-    model_path = '/root/autodl-tmp/model'
+    model_path = 'TianYeZ1214/Qwenov3'
     AutoConfig.register("Qwenov3", Qwenov3Config)
     AutoModelForCausalLM.register(Qwenov3Config, Qwenov3)
 
@@ -125,7 +125,7 @@ if __name__ == '__main__':
         project="Qwenov3",
         experiment_name="GSPO",
         resume=True,
-        id="6hb6nz4hidco4jzomb5t6",
+        id="07wegf4f990h4kvgkn7qq",
     )
 
     training_args = GRPOConfig(
@@ -135,17 +135,17 @@ if __name__ == '__main__':
         beta=0.0,
         epsilon=3e-4,
         epsilon_high=4e-4,
-        steps_per_generation=64,
+        steps_per_generation=32,
         learning_rate=1e-5,
         remove_unused_columns=False,
         num_train_epochs=3,
         bf16=True,
-        per_device_train_batch_size=8,
-        gradient_accumulation_steps=16,
+        per_device_train_batch_size=4,
+        gradient_accumulation_steps=8,
         warmup_ratio=0.05,
         lr_scheduler_type='cosine',
-        max_completion_length=4096,
-        num_generations=16,
+        max_completion_length=1024,
+        num_generations=8,
         max_prompt_length=None,
         logging_steps=20,
         save_strategy="epoch",
@@ -153,8 +153,6 @@ if __name__ == '__main__':
         dataloader_num_workers=1,
         use_liger_kernel=True,
         report_to="none",
-        use_transformers_paged=False,
-        cache_implementation="dynamic",
         generation_kwargs={
             "temperature": 0.6,
             "top_p": 0.95,
@@ -162,14 +160,14 @@ if __name__ == '__main__':
             "min_p": 0.0,
             "do_sample": True,
             "use_cache": True,
-            "max_new_tokens": 4096
+            "max_new_tokens": 1024
         },
     )
 
     trainer = GRPOTrainer(
         model=model,
         reward_funcs=[format_reward, accuracy_reward, language_consistency_reward
-            , self_verification_reward, conciseness_reward, confidence_reward],
+            , self_verification_reward, conciseness_reward, confidence_reward, error_penalty_reward],
         args=training_args,
         processing_class=processing_class,
         train_dataset=train_dataset,

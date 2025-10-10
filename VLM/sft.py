@@ -9,7 +9,7 @@ from Dataset import MyDataset, MyDataCollator
 if __name__ == '__main__':
     accelerator = Accelerator()
     config = Qwenov3Config()
-    model_path = '/root/autodl-tmp/code/save/pretrain'
+    model_path = 'TianYeZ1214/Qwenov3'
     AutoConfig.register("Qwenov3", Qwenov3Config)
     AutoModelForCausalLM.register(Qwenov3Config, Qwenov3)
     model = AutoModelForCausalLM.from_pretrained(model_path, low_cpu_mem_usage=True, dtype=torch.bfloat16)
@@ -17,7 +17,7 @@ if __name__ == '__main__':
     if accelerator.is_main_process:
         print(model)
         print(f'模型参数量为：{sum(p.numel() for p in model.parameters() if p.requires_grad)}')
-    data_path = '/root/autodl-tmp/Dataset/llava'
+    data_path = 'lmms-lab/LLaVA-NeXT-Data'
     tokenizer = model.tokenizer
     processor = model.processor
 
@@ -42,8 +42,8 @@ if __name__ == '__main__':
         report_to="none",
     )
     swanlab_callback = SwanLabCallback(
-        project="MySmallVLM",
-        experiment_name="multi_conversation",
+        project="Qwenov3",
+        experiment_name="SFT",
     )
     trainer = Trainer(
         model=model,
@@ -55,4 +55,5 @@ if __name__ == '__main__':
 
     trainer.train(resume_from_checkpoint=False)
     trainer.save_model(f'{output_dir}/sft')
+
 

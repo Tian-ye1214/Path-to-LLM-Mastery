@@ -51,8 +51,7 @@ class VLMProcessingClass(ProcessorMixin):
                 elif hasattr(img, 'convert'):
                     processed_images.append(img.convert('RGB'))
 
-            image_output = self.processor(images=processed_images, return_tensors="pt")
-            result['pixel_values'] = image_output['pixel_values']
+            result['pixel_values'] = self.processor(images=processed_images, return_tensors="pt")['pixel_values']
 
         return BatchEncoding(result)
 
@@ -118,13 +117,15 @@ if __name__ == '__main__':
 
     processing_class = VLMProcessingClass(tokenizer, processor)
 
-    output_dir = 'save_multi_conversation/'
+    output_dir = 'GSPO/'
 
     train_dataset = dataset.map(make_conversation)
 
     swanlab_callback = SwanLabCallback(
         project="Qwenov3",
         experiment_name="GSPO",
+        resume=True,
+        id="pfavd07uchljp8918osh9",
     )
 
     training_args = GRPOConfig(
@@ -133,20 +134,21 @@ if __name__ == '__main__':
         loss_type="grpo",
         beta=0.04,
         epsilon=3e-4,
-        learning_rate=5e-6,
+        learning_rate=1e-5,
         remove_unused_columns=False,
-        num_train_epochs=2,
+        num_train_epochs=3,
         bf16=True,
-        per_device_train_batch_size=1,
-        gradient_accumulation_steps=64,
+        per_device_train_batch_size=4,
+        gradient_accumulation_steps=16,
         warmup_ratio=0.05,
+        lr_scheduler_type='cosine',
         max_completion_length=4096,
-        num_generations=4,
+        num_generations=8,
         max_prompt_length=None,
-        logging_steps=1,
+        logging_steps=10,
         save_strategy="epoch",
         gradient_checkpointing=False,
-        dataloader_num_workers=8,
+        dataloader_num_workers=4,
         use_liger_kernel=True,
         report_to="none",
         use_transformers_paged=False,
@@ -164,14 +166,15 @@ if __name__ == '__main__':
 
     trainer = GRPOTrainer(
         model=model,
-        reward_funcs=[format_reward, accuracy_reward],
+        reward_funcs=[format_reward, accuracy_reward, language_consistency_reward
+            , self_verification_reward, conciseness_reward, confidence_reward],
         args=training_args,
         processing_class=processing_class,
         train_dataset=train_dataset,
         callbacks=[swanlab_callback],
     )
     trainer.train()
-    trainer.save_model(f'{output_dir}/GSPO')
+    trainer.save_model(f'{output_dir}')
     # trainer.save_model(f'{output_dir}/lora_adapter')
     # merged_model = model.merge_and_unload()
     # merged_output_dir = f'{output_dir}/merged_model'

@@ -13,9 +13,19 @@ transformers.VLM = Qwenov3
 
 
 class VLMProcessingClass(ProcessorMixin):
+    attributes = ["image_processor", "tokenizer"]
+    optional_attributes = ["chat_template"]
+    optional_call_args = []
+    feature_extractor_class = None
+    tokenizer_class = None
+    _auto_class = None
+
     def __init__(self, tokenizer, processor):
         self.tokenizer = tokenizer
         self.processor = processor
+        self.image_processor = processor
+        self.feature_extractor = processor
+        self.audio_tokenizer = None
 
         self.tokenizer.padding_side = "left"
         self.padding_side = "left"
@@ -27,6 +37,8 @@ class VLMProcessingClass(ProcessorMixin):
         self.pad_token_id = tokenizer.pad_token_id
         self.eos_token_id = tokenizer.eos_token_id
         self.bos_token_id = tokenizer.bos_token_id
+
+        self.chat_template = getattr(tokenizer, 'chat_template', None)
 
     def __call__(self, text=None, images=None, **kwargs):
         result = {}
@@ -65,7 +77,7 @@ class VLMProcessingClass(ProcessorMixin):
         return self.tokenizer.batch_decode(*args, **kwargs)
 
 
-dataset_id = 'lmms-lab/multimodal-open-r1-8k-verified'
+dataset_id = './dataset'
 dataset = load_dataset(dataset_id, split='train')
 
 SYSTEM_PROMPT = (
@@ -94,7 +106,7 @@ def make_conversation(example):
 
 if __name__ == '__main__':
     config = Qwenov3Config()
-    model_path = 'TianYeZ1214/Qwenov3'
+    model_path = '/root/autodl-tmp/model'
     AutoConfig.register("Qwenov3", Qwenov3Config)
     AutoModelForCausalLM.register(Qwenov3Config, Qwenov3)
 
@@ -124,8 +136,6 @@ if __name__ == '__main__':
     swanlab_callback = SwanLabCallback(
         project="Qwenov3",
         experiment_name="GSPO",
-        resume=True,
-        id="07wegf4f990h4kvgkn7qq",
     )
 
     training_args = GRPOConfig(
@@ -140,7 +150,7 @@ if __name__ == '__main__':
         remove_unused_columns=False,
         num_train_epochs=3,
         bf16=True,
-        per_device_train_batch_size=4,
+        per_device_train_batch_size=8,
         gradient_accumulation_steps=8,
         warmup_ratio=0.05,
         lr_scheduler_type='cosine',
@@ -166,8 +176,7 @@ if __name__ == '__main__':
 
     trainer = GRPOTrainer(
         model=model,
-        reward_funcs=[format_reward, accuracy_reward, language_consistency_reward
-            , self_verification_reward, conciseness_reward, confidence_reward, error_penalty_reward],
+        reward_funcs=[format_reward, accuracy_reward, self_verification_reward, error_penalty_reward, length_reward],
         args=training_args,
         processing_class=processing_class,
         train_dataset=train_dataset,

@@ -77,7 +77,7 @@ class VLMProcessingClass(ProcessorMixin):
         return self.tokenizer.batch_decode(*args, **kwargs)
 
 
-dataset_id = './dataset'
+dataset_id = 'lmms-lab/multimodal-open-r1-8k-verified'
 dataset = load_dataset(dataset_id, split='train')
 
 SYSTEM_PROMPT = (
@@ -106,7 +106,7 @@ def make_conversation(example):
 
 if __name__ == '__main__':
     config = Qwenov3Config()
-    model_path = '/root/autodl-tmp/model'
+    model_path = 'TianYeZ1214/Qwenov3'
     AutoConfig.register("Qwenov3", Qwenov3Config)
     AutoModelForCausalLM.register(Qwenov3Config, Qwenov3)
 
@@ -190,4 +190,5 @@ if __name__ == '__main__':
     # merged_model.save_pretrained(merged_output_dir)
     # tokenizer.save_pretrained(merged_output_dir)
     # processor.save_pretrained(merged_output_dir)
+
 

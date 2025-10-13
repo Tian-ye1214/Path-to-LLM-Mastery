@@ -178,7 +178,7 @@ if __name__ == '__main__':
 
     trainer = GRPOTrainer(
         model=model,
-        reward_funcs=[format_reward, accuracy_reward, cosine_reward, repetition_penalty_reward],
+        reward_funcs=[format_reward, cosine_reward, repetition_penalty_reward, soft_overlong_reward],
         args=training_args,
         processing_class=processing_class,
         train_dataset=train_dataset,
@@ -192,4 +192,5 @@ if __name__ == '__main__':
     # merged_model.save_pretrained(merged_output_dir)
     # tokenizer.save_pretrained(merged_output_dir)
     # processor.save_pretrained(merged_output_dir)
+
 

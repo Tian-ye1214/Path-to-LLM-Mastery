@@ -96,7 +96,7 @@ def cosine_reward(completions, solution, **kwargs):
             - cosine_min_len_value_wrong: 错误答案最小长度时的奖励值（默认-0.5）
             - cosine_max_len_value_wrong: 错误答案最大长度时的奖励值（默认0.0）
             - cosine_min_len_value_correct: 正确答案最小长度时的奖励值（默认1.0）
-            - cosine_max_len_value_correct: 正确答案最大长度时的奖励值（默认0.3）
+            - cosine_max_len_value_correct: 正确答案最大长度时的奖励值（默认0.5）
             - cosine_max_len: 最大长度阈值（默认1000）
     """
     import math
@@ -105,8 +105,8 @@ def cosine_reward(completions, solution, **kwargs):
     min_len_value_wrong = kwargs.get('cosine_min_len_value_wrong', -0.5)
     max_len_value_wrong = kwargs.get('cosine_max_len_value_wrong', 0.0)
     min_len_value_correct = kwargs.get('cosine_min_len_value_correct', 1.0)
-    max_len_value_correct = kwargs.get('cosine_max_len_value_correct', 0.3)
-    max_len = kwargs.get('cosine_max_len', 1000)
+    max_len_value_correct = kwargs.get('cosine_max_len_value_correct', 0.5)
+    max_len = kwargs.get('cosine_max_len', 4096)
     response_token_ids = kwargs.get('response_token_ids', None)
     
     # 首先获取准确性奖励
@@ -126,7 +126,7 @@ def cosine_reward(completions, solution, **kwargs):
             rewards.append(None)
             continue
             
-        is_correct = acc_reward >= 1.0
+        is_correct = acc_reward > 0.0
         if is_correct:
             min_value = max_len_value_correct
             max_value = min_len_value_correct

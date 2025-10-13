@@ -12,7 +12,8 @@ model = AutoModelForCausalLM.from_pretrained(
     model_path,
     low_cpu_mem_usage=True,
     dtype=torch.bfloat16,
-    trust_remote_code=True
+    trust_remote_code=True, 
+    attn_implementation="flash_attention_2"
 ).to(device)
 model.eval()
 
@@ -58,4 +59,13 @@ output_ids = model.generate(
     repetition_penalty=1.00,
 )
 
-print(tokenizer.decode(output_ids[0], skip_special_tokens=True))
+output_ids = output_ids[0].tolist()
+
+try:
+    index = len(output_ids) - output_ids[::-1].index(151668)
+except ValueError:
+    index = 0
+    
+content = tokenizer.decode(output_ids[index:], skip_special_tokens=True).strip("\n")
+print("content:\n", content)
+

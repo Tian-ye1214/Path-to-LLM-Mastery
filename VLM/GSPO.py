@@ -8,6 +8,7 @@ from datasets import load_dataset
 import transformers
 from PIL import Image
 import io
+from PIL.Image import Resampling
 
 transformers.VLM = Qwenov3
 
@@ -55,13 +56,13 @@ class VLMProcessingClass(ProcessorMixin):
 
             for img in images:
                 if isinstance(img, Image.Image):
-                    processed_images.append(img.convert('RGB'))
+                    processed_images.append(img.resize((224, 224), Resampling.BILINEAR).convert('RGB'))
                 elif isinstance(img, dict) and 'bytes' in img:
-                    processed_images.append(Image.open(io.BytesIO(img['bytes'])).convert('RGB'))
+                    processed_images.append(Image.open(io.BytesIO(img['bytes'])).resize((224, 224), Resampling.BILINEAR).convert('RGB'))
                 elif isinstance(img, str):
-                    processed_images.append(Image.open(img).convert('RGB'))
+                    processed_images.append(Image.open(img).resize((224, 224), Resampling.BILINEAR).convert('RGB'))
                 elif hasattr(img, 'convert'):
-                    processed_images.append(img.convert('RGB'))
+                    processed_images.append(img.resize((224, 224), Resampling.BILINEAR).convert('RGB'))
 
             result['pixel_values'] = self.processor(images=processed_images, return_tensors="pt")['pixel_values']
 
@@ -145,22 +146,22 @@ if __name__ == '__main__':
         beta=0.0,
         epsilon=3e-4,
         epsilon_high=4e-4,
-        steps_per_generation=32,
+        steps_per_generation=8,
         learning_rate=1e-5,
         remove_unused_columns=False,
         num_train_epochs=3,
         bf16=True,
         per_device_train_batch_size=8,
-        gradient_accumulation_steps=8,
-        warmup_ratio=0.05,
+        gradient_accumulation_steps=2,
+        warmup_ratio=0.1,
         lr_scheduler_type='cosine',
-        max_completion_length=1024,
+        max_completion_length=4096,
         num_generations=8,
         max_prompt_length=None,
         logging_steps=20,
         save_strategy="epoch",
         gradient_checkpointing=False,
-        dataloader_num_workers=1,
+        dataloader_num_workers=0,
         use_liger_kernel=True,
         report_to="none",
         generation_kwargs={
@@ -170,13 +171,14 @@ if __name__ == '__main__':
             "min_p": 0.0,
             "do_sample": True,
             "use_cache": True,
-            "max_new_tokens": 1024
+            "max_new_tokens": 4096,
+            "repetition_penalty": 1.1,
         },
     )
 
     trainer = GRPOTrainer(
         model=model,
-        reward_funcs=[format_reward, accuracy_reward, self_verification_reward, error_penalty_reward, length_reward],
+        reward_funcs=[format_reward, accuracy_reward, cosine_reward, repetition_penalty_reward],
         args=training_args,
         processing_class=processing_class,
         train_dataset=train_dataset,
@@ -190,5 +192,4 @@ if __name__ == '__main__':
     # merged_model.save_pretrained(merged_output_dir)
     # tokenizer.save_pretrained(merged_output_dir)
     # processor.save_pretrained(merged_output_dir)
-
 

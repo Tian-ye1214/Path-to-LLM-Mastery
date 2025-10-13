@@ -4,6 +4,10 @@ from typing import Optional
 import re
 import numpy as np
 
+def length_reward(**kwargs):
+    completion_ids = kwargs['completion_ids']
+    return [float(len(set(content))) for content in completion_ids]
+
 
 def format_reward(completions, **kwargs):
     """Reward function that checks if the completion has a specific format."""
@@ -19,13 +23,15 @@ def accuracy_reward(completions: list[list[dict[str, str]]], solution: list[str]
     - If not parseable → compare as normalized text.
     """
     rewards = []
+
     for completion, sol in zip(completions, solution):
         try:
             gold_parsed = parse(sol, extraction_mode="first_match")
-        except:
+        except Exception as e:
             gold_parsed = []
 
         if len(gold_parsed) != 0:
+            # Try parsing predicted answer too
             try:
                 answer_parsed = parse(
                     completion,
@@ -35,7 +41,6 @@ def accuracy_reward(completions: list[list[dict[str, str]]], solution: list[str]
                                 nits=False,
                                 malformed_operators=False,
                                 basic_latex=True,
-                                equations=True,
                                 boxed="all",
                                 units=True,
                             ),
@@ -48,10 +53,13 @@ def accuracy_reward(completions: list[list[dict[str, str]]], solution: list[str]
                 reward = float(verify(gold_parsed, answer_parsed))
             except Exception as e:
                 print(f"verify failed: {e}, answer: {completion}, gold: {sol}")
-                reward = 0.0
+                reward = None
         else:
-            reward = 0.0
+            # fallback to text match
+            reward = float(completion.strip().lower() == sol.strip().lower())
+
         rewards.append(reward)
+
     return rewards
 
 
@@ -85,12 +93,9 @@ def cosine_reward(completions, solution, **kwargs):
         return max_value - (max_value - min_value) * (1 - math.cos(t * math.pi / T)) / 2
 
     rewards = []
-    for ids, acc_reward in zip(completions, acc_rewards):
-        if acc_reward is None:
-            rewards.append(None)
-            continue
-
-        is_correct = acc_reward > 0.0
+    completions_ids = kwargs['completion_ids']
+    for ids, acc_reward in zip(completions_ids, acc_rewards):
+        is_correct = acc_reward >= 1.0
         if is_correct:
             min_value = max_len_value_correct
             max_value = min_len_value_correct
@@ -151,13 +156,14 @@ def repetition_penalty_reward(completions, **kwargs):
     return rewards
 
 
-def soft_overlong_reward(completions, **kwargs):
+def soft_overlong_reward(**kwargs):
+    completions_ids = kwargs['completion_ids']
     soft_max_length = 4096
-    soft_cache_length = 2048
+    soft_cache_length = 512
     expected_len = soft_max_length - soft_cache_length
 
     rewards = []
-    for completion in completions:
+    for completion in completions_ids:
         completion_length = len(completion)
         exceed_len = completion_length - expected_len
         ratio = min(exceed_len / soft_cache_length, 1.0)
@@ -165,4 +171,3 @@ def soft_overlong_reward(completions, **kwargs):
         rewards.append(reward)
 
     return rewards
-

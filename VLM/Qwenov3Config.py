@@ -3,6 +3,7 @@ from modelscope import AutoConfig, AutoProcessor, AutoModel, AutoTokenizer, Auto
 import torch
 import torch.nn as nn
 from transformers.modeling_outputs import CausalLMOutputWithPast
+from liger_kernel.transformers import LigerCrossEntropyLoss
 
 
 class Qwenov3Config(PretrainedConfig):
@@ -36,6 +37,14 @@ class Qwenov3Config(PretrainedConfig):
 
 class Qwenov3(GenerationMixin, PreTrainedModel):
     config_class = Qwenov3Config
+    base_model_prefix = "model"
+    supports_gradient_checkpointing = True
+    _no_split_modules = ["MoeDecoderLayer"]
+    _skip_keys_device_placement = ["past_key_values"]
+    _supports_sdpa = True
+    _supports_flash_attn = True
+    _can_compile_fullgraph = False
+    _supports_attention_backend = True
 
     def __init__(self, config):
         super().__init__(config)
@@ -117,10 +126,8 @@ class Qwenov3(GenerationMixin, PreTrainedModel):
         logits = outputs.logits
         loss = None
         if labels is not None:
-            loss_fct = nn.CrossEntropyLoss(ignore_index=self.tokenizer.pad_token_id)
-            loss = loss_fct(
-                logits.view(-1, logits.size(-1)), labels.view(-1).to(logits.device)
-            )
+            loss_fct = LigerCrossEntropyLoss(ignore_index=self.tokenizer.pad_token_id)
+            loss = loss_fct(logits.view(-1, logits.size(-1)), labels.view(-1).to(logits.device))
         
         return CausalLMOutputWithPast(
             loss=loss, 
@@ -143,36 +150,23 @@ class Qwenov3(GenerationMixin, PreTrainedModel):
             image_features = self.adapter(patch_embeds)
             text_embeds = text_embeds.to(image_features.dtype)
             inputs_embeds = self.merge_input_ids_with_image_features(image_features, text_embeds, input_ids)
-            return self.llm_model.generate(
-                input_ids=input_ids,
-                inputs_embeds=inputs_embeds,
-                attention_mask=attention_mask,
-                max_new_tokens=max_new_tokens,
-                temperature=temperature,
-                top_p=top_p,
-                top_k=top_k,
-                do_sample=do_sample,
-                num_beams=num_beams,
-                use_cache=use_cache,
-                pad_token_id=self.tokenizer.pad_token_id,
-                eos_token_id=self.tokenizer.eos_token_id,
-                **kwargs
-            )
         else:
-            return self.llm_model.generate(
-                input_ids=input_ids,
-                attention_mask=attention_mask,
-                max_new_tokens=max_new_tokens,
-                temperature=temperature,
-                top_p=top_p,
-                top_k=top_k,
-                do_sample=do_sample,
-                num_beams=num_beams,
-                use_cache=use_cache,
-                pad_token_id=self.tokenizer.pad_token_id,
-                eos_token_id=self.tokenizer.eos_token_id,
-                **kwargs
-            )
+            inputs_embeds = self.llm_model.get_input_embeddings()(input_ids)
+        return self.llm_model.generate(
+            input_ids=input_ids,
+            inputs_embeds=inputs_embeds,
+            attention_mask=attention_mask,
+            max_new_tokens=max_new_tokens,
+            temperature=temperature,
+            top_p=top_p,
+            top_k=top_k,
+            do_sample=do_sample,
+            num_beams=num_beams,
+            use_cache=use_cache,
+            pad_token_id=self.tokenizer.pad_token_id,
+            eos_token_id=self.tokenizer.eos_token_id,
+            **kwargs
+        )
 
     def can_generate(self):
         return True

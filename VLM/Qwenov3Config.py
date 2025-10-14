@@ -1,11 +1,11 @@
 from typing import Optional, Union
 from transformers import PreTrainedModel, PretrainedConfig, GenerationMixin, Cache, BatchFeature
-from modelscope import AutoConfig, AutoProcessor, AutoModel, AutoTokenizer, AutoModelForCausalLM
+from modelscope import AutoConfig, AutoProcessor, AutoModel, AutoTokenizer
 import torch
 import torch.nn as nn
 from transformers.image_utils import ImageInput
 from transformers.modeling_outputs import CausalLMOutputWithPast
-from liger_kernel.transformers import LigerCrossEntropyLoss
+from liger_kernel.transformers import LigerCrossEntropyLoss, AutoLigerKernelForCausalLM, LigerRMSNorm
 from transformers.processing_utils import Unpack, ProcessorMixin
 from transformers.tokenization_utils_base import TextInput, PreTokenizedInput
 from transformers.utils import TransformersKwargs
@@ -36,7 +36,7 @@ class Qwenov3Config(PretrainedConfig):
         self.hidden_size = hidden_size
         self.num_attention_heads = num_attention_heads
         self.vocab_size = vocab_size
-        
+
         super().__init__(**kwargs)
 
 
@@ -53,11 +53,11 @@ class Qwenov3Processor(ProcessorMixin):
         super().__init__(image_processor, tokenizer, chat_template=chat_template)
 
     def __call__(
-        self,
-        images: Optional[ImageInput] = None,
-        text: Union[TextInput, PreTokenizedInput, list[TextInput], list[PreTokenizedInput]] = None,
-        return_tensors: str = "pt",
-        **kwargs,
+            self,
+            images: Optional[ImageInput] = None,
+            text: Union[TextInput, PreTokenizedInput, list[TextInput], list[PreTokenizedInput]] = None,
+            return_tensors: str = "pt",
+            **kwargs,
     ) -> BatchFeature:
         image_inputs = {}
         if images is not None:
@@ -96,14 +96,16 @@ class Qwenov3(GenerationMixin, PreTrainedModel):
         if self.config.training_scratch:
             self.vision_model = AutoModel.from_pretrained(self.config.vision_model_path, low_cpu_mem_usage=True,
                                                           dtype=torch.bfloat16, attn_implementation="flash_attention_2")
-            self.llm_model = AutoModelForCausalLM.from_pretrained(self.config.llm_model_path, low_cpu_mem_usage=True,
-                                                                  dtype=torch.bfloat16,
-                                                                  attn_implementation="flash_attention_2")
+            self.llm_model = AutoLigerKernelForCausalLM.from_pretrained(self.config.llm_model_path,
+                                                                        low_cpu_mem_usage=True,
+                                                                        dtype=torch.bfloat16,
+                                                                        attn_implementation="flash_attention_2")
         else:
             vision_config = AutoConfig.from_pretrained(self.config.vision_model_path)
             self.vision_model = AutoModel.from_config(vision_config, attn_implementation="sdpa", dtype=torch.bfloat16)
             llm_config = AutoConfig.from_pretrained(self.config.llm_model_path)
-            self.llm_model = AutoModelForCausalLM.from_config(llm_config, attn_implementation="sdpa", dtype=torch.bfloat16)
+            self.llm_model = AutoLigerKernelForCausalLM.from_config(llm_config, attn_implementation="sdpa",
+                                                                    dtype=torch.bfloat16)
 
         if self.config.num_hidden_layers is None:
             self.config.num_hidden_layers = self.llm_model.config.num_hidden_layers
@@ -130,11 +132,13 @@ class Qwenov3(GenerationMixin, PreTrainedModel):
             self.llm_model.resize_token_embeddings(len(self.tokenizer), mean_resizing=True)
 
         self.adapter = nn.Sequential(
-            nn.RMSNorm(4096, dtype=torch.bfloat16),
+            LigerRMSNorm(4096),
             nn.Linear(4096, self.llm_model.config.hidden_size, dtype=torch.bfloat16),
             nn.GELU(),
             nn.Linear(self.llm_model.config.hidden_size, self.llm_model.config.hidden_size, dtype=torch.bfloat16)
         )
+
+        self.lm_head = self.llm_model.lm_head
 
         if self.config.freeze_vision_model:
             for param in self.vision_model.parameters():
@@ -144,17 +148,17 @@ class Qwenov3(GenerationMixin, PreTrainedModel):
                 param.requires_grad = False
 
     def forward(
-        self,
-        input_ids: Optional[torch.LongTensor] = None,
-        pixel_values: Optional[torch.LongTensor] = None,
-        attention_mask: Optional[torch.Tensor] = None,
-        position_ids: Optional[torch.LongTensor] = None,
-        past_key_values: Optional[Cache] = None,
-        labels: Optional[torch.LongTensor] = None,
-        use_cache: Optional[bool] = None,
-        cache_position: Optional[torch.LongTensor] = None,
-        logits_to_keep: Union[int, torch.Tensor] = 0,
-        **kwargs: Unpack[TransformersKwargs],
+            self,
+            input_ids: Optional[torch.LongTensor] = None,
+            pixel_values: Optional[torch.LongTensor] = None,
+            attention_mask: Optional[torch.Tensor] = None,
+            position_ids: Optional[torch.LongTensor] = None,
+            past_key_values: Optional[Cache] = None,
+            labels: Optional[torch.LongTensor] = None,
+            use_cache: Optional[bool] = None,
+            cache_position: Optional[torch.LongTensor] = None,
+            logits_to_keep: Union[int, torch.Tensor] = 0,
+            **kwargs: Unpack[TransformersKwargs],
     ):
         text_embeds = self.llm_model.get_input_embeddings()(input_ids)
         if pixel_values is not None:
@@ -169,17 +173,17 @@ class Qwenov3(GenerationMixin, PreTrainedModel):
             inputs_embeds = text_embeds
 
         outputs = self.llm_model(
-            input_ids=input_ids,
             attention_mask=attention_mask,
             position_ids=position_ids,
             past_key_values=past_key_values,
             inputs_embeds=inputs_embeds,
             use_cache=use_cache,
             cache_position=cache_position,
+            output_hidden_states=True,
             **kwargs,
         )
 
-        hidden_states = outputs.last_hidden_state
+        hidden_states = outputs.hidden_states[-1]
         slice_indices = slice(-logits_to_keep, None) if isinstance(logits_to_keep, int) else logits_to_keep
         logits = self.lm_head(hidden_states[:, slice_indices, :])
 
@@ -212,7 +216,6 @@ class Qwenov3(GenerationMixin, PreTrainedModel):
         else:
             inputs_embeds = self.llm_model.get_input_embeddings()(input_ids)
         return self.llm_model.generate(
-            input_ids=input_ids,
             inputs_embeds=inputs_embeds,
             attention_mask=attention_mask,
             max_new_tokens=max_new_tokens,

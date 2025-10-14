@@ -83,12 +83,12 @@ class Qwenov3(GenerationMixin, PreTrainedModel):
     config_class = Qwenov3Config
     base_model_prefix = "model"
     supports_gradient_checkpointing = True
-    _no_split_modules = ["MoeDecoderLayer"]
     _skip_keys_device_placement = ["past_key_values"]
     _supports_sdpa = True
     _supports_flash_attn = True
     _can_compile_fullgraph = False
     _supports_attention_backend = True
+    _tied_weights_keys = ["lm_head.weight", "llm_model.model.embed_tokens.weight"]
 
     def __init__(self, config):
         super().__init__(config)
@@ -240,3 +240,4 @@ class Qwenov3(GenerationMixin, PreTrainedModel):
             return inputs_embeds
         inputs_embeds[batch_indices, image_indices] = image_features.view(-1, embed_dim)
         return inputs_embeds
+

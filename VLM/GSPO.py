@@ -111,7 +111,7 @@ if __name__ == '__main__':
     AutoConfig.register("Qwenov3", Qwenov3Config)
     AutoModelForCausalLM.register(Qwenov3Config, Qwenov3)
 
-    model = AutoModelForCausalLM.from_pretrained(model_path, low_cpu_mem_usage=True, dtype=torch.bfloat16)
+    model = AutoModelForCausalLM.from_pretrained(model_path, low_cpu_mem_usage=True, dtype=torch.bfloat16, attn_implementation="sdpa")
 
     # Option
     # from peft import LoraConfig, get_peft_model
@@ -127,6 +127,7 @@ if __name__ == '__main__':
 
     processor = model.processor
     tokenizer = model.tokenizer
+    tokenizer.model_max_length = 2048
 
     processing_class = VLMProcessingClass(tokenizer, processor)
 
@@ -146,21 +147,21 @@ if __name__ == '__main__':
         beta=0.0,
         epsilon=3e-4,
         epsilon_high=4e-4,
-        steps_per_generation=8,
+        steps_per_generation=16,
         learning_rate=1e-5,
         remove_unused_columns=False,
         num_train_epochs=3,
         bf16=True,
         per_device_train_batch_size=8,
-        gradient_accumulation_steps=2,
+        gradient_accumulation_steps=4,
         warmup_ratio=0.1,
         lr_scheduler_type='cosine',
-        max_completion_length=4096,
+        max_completion_length=2048,
         num_generations=8,
         max_prompt_length=None,
         logging_steps=20,
         save_strategy="epoch",
-        gradient_checkpointing=False,
+        gradient_checkpointing=True,
         dataloader_num_workers=0,
         use_liger_kernel=True,
         report_to="none",
@@ -171,14 +172,15 @@ if __name__ == '__main__':
             "min_p": 0.0,
             "do_sample": True,
             "use_cache": True,
-            "max_new_tokens": 4096,
+            "max_new_tokens": 2048,
+            "max_length": 2048, 
             "repetition_penalty": 1.1,
         },
     )
 
     trainer = GRPOTrainer(
         model=model,
-        reward_funcs=[format_reward, cosine_reward, repetition_penalty_reward, soft_overlong_reward],
+        reward_funcs=[format_reward, cosine_reward, repetition_penalty_reward, soft_overlong_reward, length_reward],
         args=training_args,
         processing_class=processing_class,
         train_dataset=train_dataset,
@@ -192,5 +194,4 @@ if __name__ == '__main__':
     # merged_model.save_pretrained(merged_output_dir)
     # tokenizer.save_pretrained(merged_output_dir)
     # processor.save_pretrained(merged_output_dir)
-
 

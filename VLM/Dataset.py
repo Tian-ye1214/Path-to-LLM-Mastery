@@ -1,10 +1,52 @@
 import torch
-from datasets import load_dataset
-from torch.utils.data import Dataset
+from datasets import load_dataset, get_dataset_config_names, interleave_datasets, Features, Image as HFImage, Value, Sequence
+from torch.utils.data import IterableDataset
 from PIL.Image import Resampling
 from PIL import Image
 from transformers import DataCollatorForSeq2Seq
-from datasets import concatenate_datasets
+import base64
+import io
+import requests
+
+
+def parse_image(image):
+    if image is None:
+        return None
+    if isinstance(image, Image.Image):
+        return image.resize((224, 224), Resampling.BILINEAR).convert('RGB')
+
+    if isinstance(image, dict):
+        if 'bytes' in image:
+            try:
+                return Image.open(io.BytesIO(image['bytes'])).resize((224, 224), Resampling.BILINEAR).convert('RGB')
+            except Exception as e:
+                print(f"字节数据解析失败: {e}")
+                return None
+        elif 'path' in image:
+            try:
+                return Image.open(image['path']).resize((224, 224), Resampling.BILINEAR).convert('RGB')
+            except Exception as e:
+                print(f"路径加载失败: {e}")
+                return None
+
+    if isinstance(image, str):
+        if image.startswith(('http://', 'https://')):
+            try:
+                response = requests.get(image, timeout=10)
+                return Image.open(io.BytesIO(response.content)).resize((224, 224), Resampling.BILINEAR).convert('RGB')
+            except Exception as e:
+                print(f"URL加载失败: {e}")
+                return None
+        try:
+            if ',' in image and image.startswith('data:'):
+                image = image.split(',', 1)[1]
+            image_data = base64.b64decode(image)
+            return Image.open(io.BytesIO(image_data)).resize((224, 224), Resampling.BILINEAR).convert('RGB')
+        except Exception as e:
+            print(f"Base64解析失败: {e}")
+            return None
+
+    return None
 
 
 def find_assistant_tokens(tokenizer, target):
@@ -35,61 +77,191 @@ def find_assistant_tokens(tokenizer, target):
     return result
 
 
-class MyDataset(Dataset):
+def map_VisionArena_format(example):
+    conversations = []
+    for turn in example['conversation']:
+        if isinstance(turn, list) and len(turn) > 0:
+            msg = turn[0]
+            role_map = {'user': 'human', 'assistant': 'gpt'}
+            conversations.append({
+                'from': role_map.get(msg.get('role', ''), 'human'),
+                'value': msg.get('content', '')
+            })
+
+    return {
+        'image': parse_image(example['images']),
+        'conversations': conversations,
+    }
+
+
+def map_onevision_format(example):
+    return {
+        'image': parse_image(example['image']),
+        'conversations': example['conversations'],
+    }
+
+
+def map_open_r1_format(example):
+    conversations = [
+        {'from': 'human', 'value': example['problem']},
+        {'from': 'gpt', 'value': example['solution']}
+    ]
+    return {
+        'image': parse_image(example['image']),
+        'conversations': conversations,
+    }
+
+
+def map_mmmu_format(example):
+    questions = example['question'] + '\n' + example['options']
+    conversations = [
+        {'from': 'human', 'value': questions},
+        {'from': 'gpt', 'value': example['answer']}
+    ]
+    return {
+        'image':  parse_image(example['image_1']),
+        'conversations': conversations,
+    }
+
+
+def map_cauldron_format(example):
+    conversations = []
+    for turn in example['texts']:
+        conversations.append({'from': 'human', 'value': turn['user']})
+        conversations.append({'from': 'gpt', 'value': turn['assistant']})
+    return {
+        'image':  parse_image(example['images']),
+        'conversations': conversations,
+    }
+
+
+def map_livebench_format(example):
+    answer = '<think>' + example['reason'] + '</think>\n' + example['answer']
+    conversations = [
+        {'from': 'human', 'value': example['question']},
+        {'from': 'gpt', 'value': answer}
+    ]
+    return {
+        'image':  parse_image(example['images']),
+        'conversations': conversations,
+    }
+
+
+def map_llava_format(example):
+    return {
+        'image': parse_image(example['image']),
+        'conversations': example['conversations'],
+    }
+
+
+class MyDataset(IterableDataset):
     def __init__(self, data_paths, tokenizer, processor, config):
         super().__init__()
-        datasets_list = [load_dataset(data_paths)['train']]
-        self.datas = concatenate_datasets(datasets_list).shuffle(seed=42)
+
+        if not isinstance(data_paths, list):
+            data_paths = [data_paths]
+        datasets_list = []
+        cache_dir = '/root/autodl-tmp/Dataset/dataset-cache'
         self.tokenizer = tokenizer
         self.processor = processor
         self.config = config
 
-    def __len__(self):
-        return len(self.datas)
+        features = Features({
+            'image': HFImage(),
+            'conversations': Sequence({
+                'from': Value('string'),
+                'value': Value('string')
+            })
+        })
 
-    def __getitem__(self, index):
-        sample = self.datas[index]
-        image = sample['image']
-        conversations = sample['conversations']
-        messages = [{"role": "system", "content": 'You are a helpful assistant.'}]
-        if image is not None:
-            image = image.resize((224, 224), Resampling.BILINEAR).convert('RGB')
-        else:
-            image = Image.new('RGB', (224, 224), color='white')
+        # 使用streaming模式进行lazy加载
+        for path in data_paths:
+            if 'llava-recap' in path or 'llava-next' in path or 'r1-onevision' in path:
+                dataset = load_dataset(path, cache_dir=cache_dir, streaming=True)['train']
+                dataset = dataset.map(map_onevision_format, features=features)
+                datasets_list.append(dataset)
+            elif 'VisionArena' in path:
+                dataset = load_dataset(path, cache_dir=cache_dir, streaming=True)['train']
+                dataset = dataset.map(map_VisionArena_format, features=features)
+                datasets_list.append(dataset)
+            elif 'livebench' in path:
+                all_data_names = get_dataset_config_names(path)
+                for data_name in all_data_names:
+                    try:
+                        dataset = load_dataset(path, data_name, cache_dir=cache_dir, streaming=True)["test"]
+                        dataset = dataset.map(map_livebench_format, features=features)
+                        datasets_list.append(dataset)
+                    except:
+                        print(f"bad dataset:{data_name}")
+            elif 'mmmu' in path:
+                for split in ['dev', 'validation']:
+                    dataset = load_dataset(path, cache_dir=cache_dir, streaming=True)[split]
+                    dataset = dataset.map(map_mmmu_format, features=features)
+                    datasets_list.append(dataset)
+            elif 'multimodal-open-r1-8k-verified' in path:
+                dataset = load_dataset(path, cache_dir=cache_dir, streaming=True)['train']
+                dataset = dataset.map(map_open_r1_format, features=features)
+                datasets_list.append(dataset)
+            elif 'cauldron' in path:
+                all_data_names = get_dataset_config_names(path)
+                exclude_names = ["mimic_cgd", "localized_narratives", "okvqa", "ocrvqa", "clevr_math", "nlvr2"]
+                all_data_names = [name for name in all_data_names if name not in exclude_names]
+                for data_name in all_data_names:
+                    try:
+                        dataset = load_dataset(path, data_name, cache_dir=cache_dir, streaming=True)["train"]
+                        dataset = dataset.map(map_cauldron_format, features=features)
+                        datasets_list.append(dataset)
+                    except Exception as e:
+                        print(f"加载子集 {data_name} 失败: {e}")
 
-        pixel_values = self.processor(images=image, return_tensors="pt")['pixel_values']
-        if '<image>' not in conversations[0]['value']:
-            conversations[0]['value'] = '<image>\n' + conversations[0]['value']
+        # 使用interleave_datasets混合多个数据集，实现动态加载
+        # stopping_strategy="all_exhausted"确保所有数据集都被使用
+        self.datas = interleave_datasets(datasets_list, stopping_strategy="all_exhausted")
+        self.datas = self.datas.shuffle(seed=42, buffer_size=75)
+        print('数据集已配置为流式加载模式')
 
-        for conversation in conversations:
-            if conversation['from'] == 'human':
-                messages.append({"role": "user", "content": conversation['value']})
-            else:
-                messages.append({"role": "assistant", "content": conversation['value']})
-        text = (self.tokenizer.apply_chat_template(
-            messages, tokenize=False, add_generation_prompt=True, enable_thinking=False)
-                .replace('<image>', '<|vision_start|>' + '<|image_pad|>' * self.config.image_pad_num + '<|vision_end|>')
-                )
+    def __iter__(self):
+        for sample in self.datas:
+            image = sample['image']
+            conversations = sample['conversations']
 
-        input_ids = self.tokenizer(text)['input_ids']
-        indexs = find_assistant_tokens(self.tokenizer, input_ids)
-        labels = len(input_ids) * [self.tokenizer.pad_token_id]
-        for index in indexs:
-            labels[index[0]:index[1]] = input_ids[index[0]:index[1]]
+            if image is None:
+                image = Image.new('RGB', (224, 224), color='white')
+            pixel_values = self.processor(images=image, return_tensors="pt")['pixel_values']
 
-        max_length = 4096
-        if len(input_ids) > max_length:
-            input_ids = input_ids[:max_length]
-            labels = labels[:max_length]
+            messages = [{"role": "system", "content": 'You are a helpful assistant.'}]
+            if '<image>' not in conversations[0]['value']:
+                conversations[0]['value'] = '<image>\n' + conversations[0]['value']
+            for conversation in conversations:
+                if conversation['from'] == 'human':
+                    messages.append({"role": "user", "content": conversation['value']})
+                else:
+                    messages.append({"role": "assistant", "content": conversation['value']})
 
-        input_ids = input_ids[:-1]
-        labels = labels[1:]
+            text = (self.tokenizer.apply_chat_template(
+                messages, tokenize=False, add_generation_prompt=True, enable_thinking=True)
+                    .replace('<image>', '<|vision_start|>' + '<|image_pad|>' * self.config.image_pad_num + '<|vision_end|>')
+                    )
 
-        return {
-            'input_ids': input_ids,
-            'labels': labels,
-            'pixel_values': pixel_values
-        }
+            input_ids = self.tokenizer(text)['input_ids']
+            indexs = find_assistant_tokens(self.tokenizer, input_ids)
+            labels = len(input_ids) * [self.tokenizer.pad_token_id]
+            for index in indexs:
+                labels[index[0]:index[1]] = input_ids[index[0]:index[1]]
+
+            # max_length = 4096
+            # if len(input_ids) > max_length:
+            #     input_ids = input_ids[:max_length]
+            #     labels = labels[:max_length]
+
+            input_ids = input_ids[:-1]
+            labels = labels[1:]
+
+            yield {
+                'input_ids': input_ids,
+                'labels': labels,
+                'pixel_values': pixel_values
+            }
 
 
 class MyDataCollator(DataCollatorForSeq2Seq):
@@ -98,4 +270,3 @@ class MyDataCollator(DataCollatorForSeq2Seq):
         batch = super().__call__(features, return_tensors)
         batch["pixel_values"] = pixel_values
         return batch
-

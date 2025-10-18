@@ -5,10 +5,11 @@ import torch
 import torch.nn as nn
 from transformers.image_utils import ImageInput
 from transformers.modeling_outputs import CausalLMOutputWithPast
-from liger_kernel.transformers import LigerCrossEntropyLoss, AutoLigerKernelForCausalLM, LigerRMSNorm
+from liger_kernel.transformers import LigerCrossEntropyLoss, AutoLigerKernelForCausalLM, LigerRMSNorm, liger_rotary_pos_emb, LigerLayerNorm
 from transformers.processing_utils import Unpack, ProcessorMixin
 from transformers.tokenization_utils_base import TextInput, PreTokenizedInput
 from transformers.utils import TransformersKwargs
+from transformers.models.dinov3_vit import modeling_dinov3_vit
 
 
 class Qwenov3Config(PretrainedConfig):
@@ -20,10 +21,11 @@ class Qwenov3Config(PretrainedConfig):
                  freeze_llm_model=False,
                  image_pad_num=49,
                  training_scratch=False,
-                 num_hidden_layers=None,
-                 hidden_size=None,
-                 num_attention_heads=None,
-                 vocab_size=None,
+                 num_hidden_layers=28,
+                 hidden_size=1024,
+                 num_attention_heads=16,
+                 vocab_size=151936,
+                 vision_hidden_size=4096,
                  **kwargs):
         self.vision_model_path = vision_model_path
         self.llm_model_path = llm_model_path
@@ -36,6 +38,7 @@ class Qwenov3Config(PretrainedConfig):
         self.hidden_size = hidden_size
         self.num_attention_heads = num_attention_heads
         self.vocab_size = vocab_size
+        self.vision_hidden_size = vision_hidden_size
 
         super().__init__(**kwargs)
 
@@ -88,13 +91,15 @@ class Qwenov3(GenerationMixin, PreTrainedModel):
     _supports_flash_attn = True
     _can_compile_fullgraph = False
     _supports_attention_backend = True
-    _tied_weights_keys = ["lm_head.weight", "llm_model.model.embed_tokens.weight"]
+    _tied_weights_keys = ["llm_model.lm_head.weight"]
 
     def __init__(self, config):
         super().__init__(config)
         self.config = config
+        modeling_dinov3_vit.apply_rotary_pos_emb = liger_rotary_pos_emb
+        modeling_dinov3_vit.nn.LayerNorm = LigerLayerNorm
         if self.config.training_scratch:
-            self.vision_model = AutoModel.from_pretrained(self.config.vision_model_path, low_cpu_mem_usage=True,
+            self.vision_model = AutoModel.from_pretrained(self.config.vision_model_path, low_cpu_mem_usage=True, 
                                                           dtype=torch.bfloat16, attn_implementation="flash_attention_2")
             self.llm_model = AutoLigerKernelForCausalLM.from_pretrained(self.config.llm_model_path,
                                                                         low_cpu_mem_usage=True,
@@ -102,19 +107,9 @@ class Qwenov3(GenerationMixin, PreTrainedModel):
                                                                         attn_implementation="flash_attention_2")
         else:
             vision_config = AutoConfig.from_pretrained(self.config.vision_model_path)
-            self.vision_model = AutoModel.from_config(vision_config, attn_implementation="sdpa", dtype=torch.bfloat16)
+            self.vision_model = AutoModel.from_config(vision_config, attn_implementation="flash_attention_2", dtype=torch.bfloat16)
             llm_config = AutoConfig.from_pretrained(self.config.llm_model_path)
-            self.llm_model = AutoLigerKernelForCausalLM.from_config(llm_config, attn_implementation="sdpa",
-                                                                    dtype=torch.bfloat16)
-
-        if self.config.num_hidden_layers is None:
-            self.config.num_hidden_layers = self.llm_model.config.num_hidden_layers
-        if self.config.hidden_size is None:
-            self.config.hidden_size = self.llm_model.config.hidden_size
-        if self.config.num_attention_heads is None:
-            self.config.num_attention_heads = self.llm_model.config.num_attention_heads
-        if self.config.vocab_size is None:
-            self.config.vocab_size = self.llm_model.config.vocab_size
+            self.llm_model = AutoLigerKernelForCausalLM.from_config(llm_config, attn_implementation="flash_attention_2", dtype=torch.bfloat16)
 
         self.processor = AutoProcessor.from_pretrained(self.config.vision_model_path)
         self.tokenizer = AutoTokenizer.from_pretrained(self.config.llm_model_path, use_fast=True)
@@ -238,6 +233,8 @@ class Qwenov3(GenerationMixin, PreTrainedModel):
         batch_indices, image_indices = torch.where(input_ids == self.tokenizer('<|image_pad|>')['input_ids'][0])
         if len(batch_indices) == 0:
             return inputs_embeds
-        inputs_embeds[batch_indices, image_indices] = image_features.view(-1, embed_dim)
+        image_features_flat = image_features.view(-1, embed_dim)
+        for i in range(num_images):
+            mask = batch_indices == i
+            inputs_embeds[batch_indices[mask], image_indices[mask]] = image_features_flat[i*num_image_patches:(i+1)*num_image_patches]
         return inputs_embeds
-

@@ -1,5 +1,5 @@
 import torch
-from datasets import load_dataset, get_dataset_config_names, interleave_datasets, Features, Image as HFImage, Value, Sequence
+from datasets import load_dataset, get_dataset_config_names, interleave_datasets, Features, Image as HFImage, Value, Sequence, IterableDataset as HFIterableDataset
 from torch.utils.data import IterableDataset
 from PIL.Image import Resampling
 from PIL import Image
@@ -7,6 +7,7 @@ from transformers import DataCollatorForSeq2Seq
 import base64
 import io
 import requests
+import random
 
 
 def parse_image(image):
@@ -177,14 +178,19 @@ class MyDataset(IterableDataset):
         # 使用streaming模式进行lazy加载
         for path in data_paths:
             if 'llava-recap' in path or 'llava-next' in path or 'r1-onevision' in path:
+                # llava-next data_num=779289
+                # llava-recap data_num=2857560
+                # r1-onevision 154667
                 dataset = load_dataset(path, cache_dir=cache_dir, streaming=True)['train']
                 dataset = dataset.map(map_onevision_format, features=features)
                 datasets_list.append(dataset)
             elif 'VisionArena' in path:
+                # 199036
                 dataset = load_dataset(path, cache_dir=cache_dir, streaming=True)['train']
                 dataset = dataset.map(map_VisionArena_format, features=features)
                 datasets_list.append(dataset)
             elif 'livebench' in path:
+                # data_num = 1000
                 all_data_names = get_dataset_config_names(path)
                 for data_name in all_data_names:
                     try:
@@ -194,15 +200,18 @@ class MyDataset(IterableDataset):
                     except:
                         print(f"bad dataset:{data_name}")
             elif 'mmmu' in path:
+                # 1050
                 for split in ['dev', 'validation']:
                     dataset = load_dataset(path, cache_dir=cache_dir, streaming=True)[split]
                     dataset = dataset.map(map_mmmu_format, features=features)
                     datasets_list.append(dataset)
             elif 'multimodal-open-r1-8k-verified' in path:
+                # 7689
                 dataset = load_dataset(path, cache_dir=cache_dir, streaming=True)['train']
                 dataset = dataset.map(map_open_r1_format, features=features)
                 datasets_list.append(dataset)
             elif 'cauldron' in path:
+                # 1,880,992
                 all_data_names = get_dataset_config_names(path)
                 exclude_names = ["mimic_cgd", "localized_narratives", "okvqa", "ocrvqa", "clevr_math", "nlvr2"]
                 all_data_names = [name for name in all_data_names if name not in exclude_names]
@@ -214,11 +223,17 @@ class MyDataset(IterableDataset):
                     except Exception as e:
                         print(f"加载子集 {data_name} 失败: {e}")
 
-        # 使用interleave_datasets混合多个数据集，实现动态加载
-        # stopping_strategy="all_exhausted"确保所有数据集都被使用
-        self.datas = interleave_datasets(datasets_list, stopping_strategy="all_exhausted")
-        self.datas = self.datas.shuffle(seed=42, buffer_size=75)
-        print('数据集已配置为流式加载模式')
+        def balanced_generator():
+            iterators = [iter(ds) for ds in datasets_list]
+            while iterators:
+                it_idx = random.randrange(len(iterators))
+                try:
+                    yield next(iterators[it_idx])
+                except StopIteration:
+                    iterators.pop(it_idx)
+
+        self.datas = HFIterableDataset.from_generator(balanced_generator)
+        self.datas = self.datas.shuffle(seed=42, buffer_size=8000)
 
     def __iter__(self):
         for sample in self.datas:
@@ -230,8 +245,9 @@ class MyDataset(IterableDataset):
             pixel_values = self.processor(images=image, return_tensors="pt")['pixel_values']
 
             messages = [{"role": "system", "content": 'You are a helpful assistant.'}]
-            if '<image>' not in conversations[0]['value']:
-                conversations[0]['value'] = '<image>\n' + conversations[0]['value']
+            for conversation in conversations:
+                conversation['value'] = conversation['value'].replace('<image>', '')
+            conversations[0]['value'] = '<image>\n' + conversations[0]['value']
             for conversation in conversations:
                 if conversation['from'] == 'human':
                     messages.append({"role": "user", "content": conversation['value']})
@@ -249,10 +265,10 @@ class MyDataset(IterableDataset):
             for index in indexs:
                 labels[index[0]:index[1]] = input_ids[index[0]:index[1]]
 
-            # max_length = 4096
-            # if len(input_ids) > max_length:
-            #     input_ids = input_ids[:max_length]
-            #     labels = labels[:max_length]
+            max_length = 8192
+            if len(input_ids) > max_length:
+                input_ids = input_ids[:max_length]
+                labels = labels[:max_length]
 
             input_ids = input_ids[:-1]
             labels = labels[1:]

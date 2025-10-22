@@ -11,6 +11,12 @@
 
 QwenoV3 结合了强大的 DINOv3 视觉编码器和高效的 Qwen3 语言模型，构建了一个轻量级但功能强大的多模态模型。它能够理解图像和文本，并就图像内容进行流畅的对话。
 
+## 🌟 近期更新
+- **支持SDPA和flash_attention**
+- **支持流式数据加载**
+- **支持liger_kernal**
+- **支持变长图像token**
+
 ## ✨ 主要特性
 
 - **强大的视觉理解**: 采用 `DINOv3-ViT-L` 作为视觉骨干，能够从图像中提取丰富的语义特征。
@@ -58,6 +64,7 @@ streamlit run StreamlitUI.py
 ## 📊 训练详情
 
 更多训练细节请访问: [SwanLab](https://swanlab.cn/@tian_ye/Qwenov3/overview)
+
 
 
 

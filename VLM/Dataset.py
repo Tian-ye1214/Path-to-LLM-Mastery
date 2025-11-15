@@ -1,5 +1,5 @@
 import torch
-from datasets import load_dataset, get_dataset_config_names, interleave_datasets, Features, Image as HFImage, Value, Sequence, IterableDataset as HFIterableDataset
+from datasets import load_dataset, get_dataset_config_names, Features, Image as HFImage, Value, Sequence, IterableDataset as HFIterableDataset
 from torch.utils.data import IterableDataset
 from PIL.Image import Resampling
 from PIL import Image
@@ -10,31 +10,57 @@ import requests
 import random
 
 
+def process_image_to_5_patches(image, target_size=224):
+    width, height = image.size
+    new_width = width if width % 2 == 0 else width + 1
+    new_height = height if height % 2 == 0 else height + 1
+
+    if new_width != width or new_height != height:
+        image = image.resize((new_width, new_height), Resampling.BILINEAR)
+
+    img_full = image.resize((target_size, target_size), Resampling.BILINEAR)
+    mid_w = new_width // 2
+    mid_h = new_height // 2
+    img_top_left = image.crop((0, 0, mid_w, mid_h)).resize((target_size, target_size), Resampling.BILINEAR)
+    img_top_right = image.crop((mid_w, 0, new_width, mid_h)).resize((target_size, target_size), Resampling.BILINEAR)
+    img_bottom_left = image.crop((0, mid_h, mid_w, new_height)).resize((target_size, target_size), Resampling.BILINEAR)
+    img_bottom_right = image.crop((mid_w, mid_h, new_width, new_height)).resize((target_size, target_size),
+                                                                                Resampling.BILINEAR)
+
+    return [img_full, img_top_left, img_top_right, img_bottom_left, img_bottom_right]
+
+
 def parse_image(image):
     if image is None:
         return None
-    if isinstance(image, Image.Image):
-        return image.resize((224, 224), Resampling.BILINEAR).convert('RGB')
+    
+    if isinstance(image, list):
+        if len(image) == 0:
+            return None
+        image = image[0]
 
     if isinstance(image, dict):
-        if 'bytes' in image:
-            try:
-                return Image.open(io.BytesIO(image['bytes'])).resize((224, 224), Resampling.BILINEAR).convert('RGB')
-            except Exception as e:
-                print(f"字节数据解析失败: {e}")
-                return None
-        elif 'path' in image:
-            try:
-                return Image.open(image['path']).resize((224, 224), Resampling.BILINEAR).convert('RGB')
-            except Exception as e:
-                print(f"路径加载失败: {e}")
-                return None
+        try:
+            return Image.open(io.BytesIO(image['bytes'])).convert('RGB')
+        except Exception as e:
+            print(f"字节数据解析失败: {e}")
+            return None
+
+    if isinstance(image, Image.Image):
+        return image.convert('RGB')
+
+    if isinstance(image, bytes):
+        try:
+            return Image.open(io.BytesIO(image)).convert('RGB')
+        except Exception as e:
+            print(f"字节数据解析失败: {e}")
+            return None
 
     if isinstance(image, str):
         if image.startswith(('http://', 'https://')):
             try:
                 response = requests.get(image, timeout=10)
-                return Image.open(io.BytesIO(response.content)).resize((224, 224), Resampling.BILINEAR).convert('RGB')
+                return Image.open(io.BytesIO(response.content)).convert('RGB')
             except Exception as e:
                 print(f"URL加载失败: {e}")
                 return None
@@ -42,7 +68,7 @@ def parse_image(image):
             if ',' in image and image.startswith('data:'):
                 image = image.split(',', 1)[1]
             image_data = base64.b64decode(image)
-            return Image.open(io.BytesIO(image_data)).resize((224, 224), Resampling.BILINEAR).convert('RGB')
+            return Image.open(io.BytesIO(image_data)).convert('RGB')
         except Exception as e:
             print(f"Base64解析失败: {e}")
             return None
@@ -137,7 +163,7 @@ def map_cauldron_format(example):
 
 
 def map_livebench_format(example):
-    answer = '<think>' + example['reason'] + '</think>\n' + example['answer']
+    answer = '<think>\n' + example['reason'] + '\n</think>\n' + example['answer']
     conversations = [
         {'from': 'human', 'value': example['question']},
         {'from': 'gpt', 'value': answer}
@@ -161,11 +187,12 @@ class MyDataset(IterableDataset):
 
         if not isinstance(data_paths, list):
             data_paths = [data_paths]
-        datasets_list = []
+        self.datasets_list = []
         cache_dir = '/root/autodl-tmp/Dataset/dataset-cache'
         self.tokenizer = tokenizer
         self.processor = processor
         self.config = config
+        self.epoch_counter = 0
 
         features = Features({
             'image': HFImage(),
@@ -178,17 +205,17 @@ class MyDataset(IterableDataset):
         # 使用streaming模式进行lazy加载
         for path in data_paths:
             if 'llava-recap' in path or 'llava-next' in path or 'r1-onevision' in path:
-                # llava-next data_num=779289
-                # llava-recap data_num=2857560
+                # llava-next 779289
+                # llava-recap 2857560
                 # r1-onevision 154667
                 dataset = load_dataset(path, cache_dir=cache_dir, streaming=True)['train']
                 dataset = dataset.map(map_onevision_format, features=features)
-                datasets_list.append(dataset)
+                self.datasets_list.append(dataset)
             elif 'VisionArena' in path:
                 # 199036
                 dataset = load_dataset(path, cache_dir=cache_dir, streaming=True)['train']
                 dataset = dataset.map(map_VisionArena_format, features=features)
-                datasets_list.append(dataset)
+                self.datasets_list.append(dataset)
             elif 'livebench' in path:
                 # data_num = 1000
                 all_data_names = get_dataset_config_names(path)
@@ -196,7 +223,7 @@ class MyDataset(IterableDataset):
                     try:
                         dataset = load_dataset(path, data_name, cache_dir=cache_dir, streaming=True)["test"]
                         dataset = dataset.map(map_livebench_format, features=features)
-                        datasets_list.append(dataset)
+                        self.datasets_list.append(dataset)
                     except:
                         print(f"bad dataset:{data_name}")
             elif 'mmmu' in path:
@@ -204,12 +231,12 @@ class MyDataset(IterableDataset):
                 for split in ['dev', 'validation']:
                     dataset = load_dataset(path, cache_dir=cache_dir, streaming=True)[split]
                     dataset = dataset.map(map_mmmu_format, features=features)
-                    datasets_list.append(dataset)
+                    self.datasets_list.append(dataset)
             elif 'multimodal-open-r1-8k-verified' in path:
                 # 7689
                 dataset = load_dataset(path, cache_dir=cache_dir, streaming=True)['train']
                 dataset = dataset.map(map_open_r1_format, features=features)
-                datasets_list.append(dataset)
+                self.datasets_list.append(dataset)
             elif 'cauldron' in path:
                 # 1,880,992
                 all_data_names = get_dataset_config_names(path)
@@ -219,62 +246,89 @@ class MyDataset(IterableDataset):
                     try:
                         dataset = load_dataset(path, data_name, cache_dir=cache_dir, streaming=True)["train"]
                         dataset = dataset.map(map_cauldron_format, features=features)
-                        datasets_list.append(dataset)
+                        self.datasets_list.append(dataset)
                     except Exception as e:
                         print(f"加载子集 {data_name} 失败: {e}")
 
-        def balanced_generator():
-            iterators = [iter(ds) for ds in datasets_list]
-            while iterators:
-                it_idx = random.randrange(len(iterators))
-                try:
-                    yield next(iterators[it_idx])
-                except StopIteration:
-                    iterators.pop(it_idx)
-
-        self.datas = HFIterableDataset.from_generator(balanced_generator)
-        self.datas = self.datas.shuffle(seed=42, buffer_size=8000)
-
     def __iter__(self):
-        for sample in self.datas:
+        def balanced_generator():
+            iterators = [iter(ds) for ds in self.datasets_list]
+            while iterators:
+                for i in range(len(iterators) - 1, -1, -1):
+                    try:
+                        yield next(iterators[i])
+                    except StopIteration:
+                        iterators.pop(i)
+
+        current_seed = 42 + self.epoch_counter
+        self.epoch_counter += 1
+        epoch_datas = HFIterableDataset.from_generator(balanced_generator)
+        epoch_datas = epoch_datas.shuffle(seed=current_seed, buffer_size=10000)
+
+        for sample in epoch_datas:
             image = sample['image']
             conversations = sample['conversations']
 
             if image is None:
-                image = Image.new('RGB', (224, 224), color='white')
-            pixel_values = self.processor(images=image, return_tensors="pt")['pixel_values']
+                print(f"样本的图片为 None，跳过该样本")
+                continue
+            pixel_values = self.processor(images=process_image_to_5_patches(image), return_tensors="pt")['pixel_values']
+            # pixel_values shape [5, 3, 224, 224]，
 
             messages = [{"role": "system", "content": 'You are a helpful assistant.'}]
             for conversation in conversations:
                 conversation['value'] = conversation['value'].replace('<image>', '')
-            conversations[0]['value'] = '<image>\n' + conversations[0]['value']
+            if conversations[0]['value'] == '' or conversations[0]['value'] is None or conversations[0]['value'] == ' ':
+                conversations[0]['value'] = '描述图片内容。'
+
+            text = conversations[0]['value']
+            if len(text) > 3900:
+                position_choice = 'start'
+            else:
+                position_choice = random.choice(['start', 'end', 'period'])
+
+            if position_choice == 'start':
+                conversations[0]['value'] = '<image>\n' + text
+            elif position_choice == 'end':
+                conversations[0]['value'] = text + '\n<image>'
+            elif position_choice == 'period':
+                periods = [i for i, char in enumerate(text) if char in ['。', '.', '!', '?', '！', '？', ',', '，']]
+                if periods:
+                    insert_pos = random.choice(periods) + 1
+                    conversations[0]['value'] = text[:insert_pos] + '<image>' + text[insert_pos:]
+                else:
+                    conversations[0]['value'] = text + '<image>'
             for conversation in conversations:
                 if conversation['from'] == 'human':
                     messages.append({"role": "user", "content": conversation['value']})
                 else:
                     messages.append({"role": "assistant", "content": conversation['value']})
 
-            text = (self.tokenizer.apply_chat_template(
-                messages, tokenize=False, add_generation_prompt=True, enable_thinking=True)
-                    .replace('<image>', '<|vision_start|>' + '<|image_pad|>' * self.config.image_pad_num + '<|vision_end|>')
-                    )
+            text = self.tokenizer.apply_chat_template(
+                messages, tokenize=False, add_generation_prompt=True, enable_thinking=True
+            ).replace('<image>', '<|vision_start|>' + '<|image_pad|>' * self.config.image_pad_num + '<|vision_end|>')
 
-            input_ids = self.tokenizer(text)['input_ids']
+            inputs = self.tokenizer(text)
+            input_ids = inputs['input_ids']
+            attention_mask = inputs['attention_mask']
             indexs = find_assistant_tokens(self.tokenizer, input_ids)
             labels = len(input_ids) * [self.tokenizer.pad_token_id]
             for index in indexs:
                 labels[index[0]:index[1]] = input_ids[index[0]:index[1]]
 
-            max_length = 8192
+            max_length = 4096
             if len(input_ids) > max_length:
                 input_ids = input_ids[:max_length]
                 labels = labels[:max_length]
+                attention_mask = attention_mask[:max_length]
 
             input_ids = input_ids[:-1]
             labels = labels[1:]
+            attention_mask = attention_mask[:-1]
 
             yield {
                 'input_ids': input_ids,
+                'attention_mask': attention_mask,
                 'labels': labels,
                 'pixel_values': pixel_values
             }
@@ -282,7 +336,8 @@ class MyDataset(IterableDataset):
 
 class MyDataCollator(DataCollatorForSeq2Seq):
     def __call__(self, features, return_tensors=None):
-        pixel_values = torch.cat([feature.pop("pixel_values") for feature in features], dim=0)
+        # 保持每个样本的5张图片在一起: [B, 5, 3, 224, 224]
+        pixel_values = torch.stack([feature.pop("pixel_values") for feature in features], dim=0)
         batch = super().__call__(features, return_tensors)
         batch["pixel_values"] = pixel_values
         return batch

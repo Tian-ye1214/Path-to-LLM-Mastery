@@ -1,25 +1,25 @@
 from typing import Optional, Union
-from transformers import PreTrainedModel, PretrainedConfig, GenerationMixin, Cache, BatchFeature
-from modelscope import AutoConfig, AutoProcessor, AutoModel, AutoTokenizer
+from transformers import PreTrainedModel, PretrainedConfig, GenerationMixin, BatchFeature
+from transformers.modeling_outputs import CausalLMOutputWithPast
+from modelscope import AutoConfig, AutoProcessor, AutoModel, AutoTokenizer, AutoModelForCausalLM
 import torch
 import torch.nn as nn
 from transformers.image_utils import ImageInput
-from transformers.modeling_outputs import CausalLMOutputWithPast
-from liger_kernel.transformers import LigerCrossEntropyLoss, AutoLigerKernelForCausalLM, LigerRMSNorm, liger_rotary_pos_emb, LigerLayerNorm
+from liger_kernel.transformers import LigerCrossEntropyLoss, AutoLigerKernelForCausalLM, LigerLayerNorm
 from transformers.processing_utils import Unpack, ProcessorMixin
 from transformers.tokenization_utils_base import TextInput, PreTokenizedInput
 from transformers.utils import TransformersKwargs
-from transformers.models.dinov3_vit import modeling_dinov3_vit
 
 
 class Qwenov3Config(PretrainedConfig):
     model_type = "Qwenov3"
 
-    def __init__(self, llm_model_path='Qwen/Qwen3-0.6B',
+    def __init__(self,
+                 llm_model_path='Qwen/Qwen3-0.6B',
                  vision_model_path='facebook/dinov3-vitl16-pretrain-lvd1689m',
                  freeze_vision_model=False,
                  freeze_llm_model=False,
-                 image_pad_num=49,
+                 image_pad_num=246,
                  training_scratch=False,
                  num_hidden_layers=28,
                  hidden_size=1024,
@@ -39,7 +39,6 @@ class Qwenov3Config(PretrainedConfig):
         self.num_attention_heads = num_attention_heads
         self.vocab_size = vocab_size
         self.vision_hidden_size = vision_hidden_size
-
         super().__init__(**kwargs)
 
 
@@ -48,7 +47,7 @@ class Qwenov3Processor(ProcessorMixin):
     image_processor_class = "AutoImageProcessor"
     tokenizer_class = "AutoTokenizer"
 
-    def __init__(self, image_processor=None, tokenizer=None, chat_template=None, image_pad_num=49, **kwargs):
+    def __init__(self, image_processor=None, tokenizer=None, chat_template=None, image_pad_num=246, **kwargs):
         self.image_token = "<|image_pad|>"
         self.image_pad_num = image_pad_num
         if chat_template is None and tokenizer is not None:
@@ -64,25 +63,29 @@ class Qwenov3Processor(ProcessorMixin):
     ) -> BatchFeature:
         image_inputs = {}
         if images is not None:
-            image_inputs = {'pixel_values': self.image_processor(images=images, return_tensors="pt")['pixel_values']}
-
+            from Dataset import process_image_to_5_patches
+            images = process_image_to_5_patches(images)
+            pixel_values = self.image_processor(images=images, return_tensors="pt")['pixel_values']
+            if len(pixel_values.shape) == 4:
+                pixel_values = pixel_values.unsqueeze(0)
+            image_inputs = {'pixel_values': pixel_values}
         if not isinstance(text, list):
             text = [text]
-
         processed_text = []
-        for t in text:
-            replacement = '<|vision_start|>' + '<|image_pad|>' * self.image_pad_num + '<|vision_end|>'
-            if '<image>' not in t:
-                t = t.replace('<|im_end|>', '<image><|im_end|>', 1)
-            processed_text.append(t.replace('<image>', replacement))
-
+        if images is not None:
+            for t in text:
+                replacement = '<|vision_start|>' + '<|image_pad|>' * self.image_pad_num + '<|vision_end|>'
+                if '<image>' not in t:
+                    t = t.replace('<|im_start|>user', '<|im_start|>user\n<image>', 1)
+                processed_text.append(t.replace('<image>', replacement))
+        else:
+            processed_text = text
         tokenizer_kwargs = {k: v for k, v in kwargs.items() if k not in ['images']}
         text_inputs = self.tokenizer(processed_text, return_tensors=return_tensors, **tokenizer_kwargs)
-
         return BatchFeature(data={**text_inputs, **image_inputs})
 
 
-class Qwenov3(GenerationMixin, PreTrainedModel):
+class Qwenov3(PreTrainedModel, GenerationMixin):
     config_class = Qwenov3Config
     base_model_prefix = "model"
     supports_gradient_checkpointing = True
@@ -96,23 +99,33 @@ class Qwenov3(GenerationMixin, PreTrainedModel):
     def __init__(self, config):
         super().__init__(config)
         self.config = config
-        modeling_dinov3_vit.apply_rotary_pos_emb = liger_rotary_pos_emb
-        modeling_dinov3_vit.nn.LayerNorm = LigerLayerNorm
         if self.config.training_scratch:
-            self.vision_model = AutoModel.from_pretrained(self.config.vision_model_path, low_cpu_mem_usage=True, 
-                                                          dtype=torch.bfloat16, attn_implementation="flash_attention_2")
+            self.vision_model = AutoModel.from_pretrained(self.config.vision_model_path,
+                                                          low_cpu_mem_usage=True,
+                                                          dtype=torch.bfloat16,
+                                                          attn_implementation="sdpa")
             self.llm_model = AutoLigerKernelForCausalLM.from_pretrained(self.config.llm_model_path,
                                                                         low_cpu_mem_usage=True,
                                                                         dtype=torch.bfloat16,
-                                                                        attn_implementation="flash_attention_2")
+                                                                        attn_implementation="sdpa", )
         else:
             vision_config = AutoConfig.from_pretrained(self.config.vision_model_path)
-            self.vision_model = AutoModel.from_config(vision_config, attn_implementation="flash_attention_2", dtype=torch.bfloat16)
+            self.vision_model = AutoModel.from_config(vision_config,
+                                                      attn_implementation="sdpa",
+                                                      dtype=torch.bfloat16)
             llm_config = AutoConfig.from_pretrained(self.config.llm_model_path)
-            self.llm_model = AutoLigerKernelForCausalLM.from_config(llm_config, attn_implementation="flash_attention_2", dtype=torch.bfloat16)
+            self.llm_model = AutoLigerKernelForCausalLM.from_config(llm_config,
+                                                                    attn_implementation="sdpa",
+                                                                    dtype=torch.bfloat16)
 
         self.processor = AutoProcessor.from_pretrained(self.config.vision_model_path)
         self.tokenizer = AutoTokenizer.from_pretrained(self.config.llm_model_path, use_fast=True)
+        self.adapter = nn.Sequential(
+            LigerLayerNorm(self.config.vision_hidden_size),
+            nn.Linear(self.config.vision_hidden_size, self.config.hidden_size),
+            nn.GELU(),
+            nn.Linear(self.config.hidden_size, self.config.hidden_size),
+        )
 
         if self.tokenizer.pad_token is None:
             self.tokenizer.pad_token = self.tokenizer.eos_token
@@ -126,41 +139,49 @@ class Qwenov3(GenerationMixin, PreTrainedModel):
             self.tokenizer.add_tokens(['<|vision_end|>'])
             self.llm_model.resize_token_embeddings(len(self.tokenizer), mean_resizing=True)
 
-        self.adapter = nn.Sequential(
-            LigerRMSNorm(4096),
-            nn.Linear(4096, self.llm_model.config.hidden_size, dtype=torch.bfloat16),
-            nn.GELU(),
-            nn.Linear(self.llm_model.config.hidden_size, self.llm_model.config.hidden_size, dtype=torch.bfloat16)
-        )
-
-        self.lm_head = self.llm_model.lm_head
-
         if self.config.freeze_vision_model:
             for param in self.vision_model.parameters():
                 param.requires_grad = False
+            self.vision_model.eval()
         if self.config.freeze_llm_model:
             for param in self.llm_model.parameters():
                 param.requires_grad = False
+            self.llm_model.eval()
 
     def forward(
             self,
             input_ids: Optional[torch.LongTensor] = None,
             pixel_values: Optional[torch.LongTensor] = None,
             attention_mask: Optional[torch.Tensor] = None,
-            position_ids: Optional[torch.LongTensor] = None,
-            past_key_values: Optional[Cache] = None,
             labels: Optional[torch.LongTensor] = None,
-            use_cache: Optional[bool] = None,
-            cache_position: Optional[torch.LongTensor] = None,
-            logits_to_keep: Union[int, torch.Tensor] = 0,
             **kwargs: Unpack[TransformersKwargs],
     ):
         text_embeds = self.llm_model.get_input_embeddings()(input_ids)
         if pixel_values is not None:
-            image_embeds = self.vision_model(pixel_values).last_hidden_state
-            patch_embeds = image_embeds[:, 5:, :]  # [batch, 196, 1024]
-            b, num_patches, hidden_dim = patch_embeds.shape
-            patch_embeds = patch_embeds.view(b, num_patches // 4, hidden_dim * 4)  # [batch, 49, 4096]
+            # pixel_values: [B, 5, 3, 224, 224]
+            B, num_images, C, H, W = pixel_values.shape
+            pixel_values_flat = pixel_values.view(B * num_images, C, H, W)
+            image_embeds_flat = self.vision_model(pixel_values_flat).last_hidden_state
+            image_embeds = image_embeds_flat.view(B, num_images, -1, image_embeds_flat.shape[-1])  # [B, 5, 201, 1024]
+
+            batch_features = []
+            for b in range(B):
+                first_img_tokens = image_embeds[b, 0, 5:, :]
+                other_img_tokens = []
+                for i in range(1, num_images):
+                    tokens = torch.cat([
+                        image_embeds[b, i, 0:1, :],  # 第1个token [1, 1024]
+                        image_embeds[b, i, 5:, :]    # 后196个token [196, 1024]
+                    ], dim=0)  # [197, 1024]
+                    other_img_tokens.append(tokens)
+                
+                # 拼接：[196, 1024] + 4*[197, 1024] = [984, 1024]
+                sample_tokens = torch.cat([first_img_tokens] + other_img_tokens, dim=0)
+                batch_features.append(sample_tokens)
+
+            patch_embeds = torch.stack(batch_features, dim=0)
+            _, total_tokens, hidden_dim = patch_embeds.shape
+            patch_embeds = patch_embeds.view(B, total_tokens // 4, hidden_dim * 4)
             image_features = self.adapter(patch_embeds)
             text_embeds = text_embeds.to(image_features.dtype)
             inputs_embeds = self.merge_input_ids_with_image_features(image_features, text_embeds, input_ids)
@@ -168,24 +189,17 @@ class Qwenov3(GenerationMixin, PreTrainedModel):
             inputs_embeds = text_embeds
 
         outputs = self.llm_model(
-            attention_mask=attention_mask,
-            position_ids=position_ids,
-            past_key_values=past_key_values,
             inputs_embeds=inputs_embeds,
-            use_cache=use_cache,
-            cache_position=cache_position,
-            output_hidden_states=True,
-            **kwargs,
+            attention_mask=attention_mask,
+            **kwargs
         )
-
-        hidden_states = outputs.hidden_states[-1]
-        slice_indices = slice(-logits_to_keep, None) if isinstance(logits_to_keep, int) else logits_to_keep
-        logits = self.lm_head(hidden_states[:, slice_indices, :])
+        logits = outputs[0]
 
         loss = None
         if labels is not None:
             loss_fct = LigerCrossEntropyLoss(ignore_index=self.tokenizer.pad_token_id)
             loss = loss_fct(logits.view(-1, logits.size(-1)), labels.view(-1).to(logits.device))
+            loss = loss / 64.0
 
         return CausalLMOutputWithPast(
             loss=loss,
@@ -201,10 +215,29 @@ class Qwenov3(GenerationMixin, PreTrainedModel):
                  do_sample=True, num_beams=1, use_cache=True, **kwargs):
         if pixel_values is not None:
             text_embeds = self.llm_model.get_input_embeddings()(input_ids)
-            image_embeds = self.vision_model(pixel_values).last_hidden_state
-            patch_embeds = image_embeds[:, 5:, :]
-            b, num_patches, hidden_dim = patch_embeds.shape
-            patch_embeds = patch_embeds.view(b, num_patches // 4, hidden_dim * 4)
+            
+            B, num_images, C, H, W = pixel_values.shape
+            pixel_values_flat = pixel_values.view(B * num_images, C, H, W)
+            image_embeds_flat = self.vision_model(pixel_values_flat, output_hidden_states=True).last_hidden_state
+            image_embeds = image_embeds_flat.view(B, num_images, -1, image_embeds_flat.shape[-1])
+ 
+            batch_features = []
+            for b in range(B):
+                first_img_tokens = image_embeds[b, 0, 5:, :]
+                other_img_tokens = []
+                for i in range(1, num_images):
+                    tokens = torch.cat([
+                        image_embeds[b, i, 0:1, :],
+                        image_embeds[b, i, 5:, :]
+                    ], dim=0)
+                    other_img_tokens.append(tokens)
+                
+                sample_tokens = torch.cat([first_img_tokens] + other_img_tokens, dim=0)
+                batch_features.append(sample_tokens)
+ 
+            patch_embeds = torch.stack(batch_features, dim=0)
+            _, total_tokens, hidden_dim = patch_embeds.shape
+            patch_embeds = patch_embeds.view(B, total_tokens // 4, hidden_dim * 4)
             image_features = self.adapter(patch_embeds)
             text_embeds = text_embeds.to(image_features.dtype)
             inputs_embeds = self.merge_input_ids_with_image_features(image_features, text_embeds, input_ids)
@@ -225,16 +258,8 @@ class Qwenov3(GenerationMixin, PreTrainedModel):
             **kwargs
         )
 
-    def can_generate(self):
-        return True
-
     def merge_input_ids_with_image_features(self, image_features, inputs_embeds, input_ids):
         num_images, num_image_patches, embed_dim = image_features.shape
         batch_indices, image_indices = torch.where(input_ids == self.tokenizer('<|image_pad|>')['input_ids'][0])
-        if len(batch_indices) == 0:
-            return inputs_embeds
-        image_features_flat = image_features.view(-1, embed_dim)
-        for i in range(num_images):
-            mask = batch_indices == i
-            inputs_embeds[batch_indices[mask], image_indices[mask]] = image_features_flat[i*num_image_patches:(i+1)*num_image_patches]
+        inputs_embeds[batch_indices, image_indices] = image_features.view(-1, embed_dim)
         return inputs_embeds

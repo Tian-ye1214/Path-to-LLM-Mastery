@@ -3,6 +3,7 @@ import numpy as np
 import torch
 from torch.nn import functional as F
 from transformers import AutoModelForCausalLM, AutoTokenizer
+from tqdm import tqdm
 
 
 def top_k_top_p_filtering(
@@ -33,13 +34,15 @@ tokenizer = AutoTokenizer.from_pretrained(model_name)
 model = AutoModelForCausalLM.from_pretrained(
     model_name,
     dtype="auto",
-    device_map="auto"
+    device_map="auto",
+    low_cpu_mem_usage=True,
+    attn_implementation="sdpa"
 )
 
 q_text = tokenizer.apply_chat_template(
     [
         {"role": "system", "content": 'You are a helpful assistant.'},
-        {"role": "user", "content": 'Give me a short introduction to large language model.'}
+        {"role": "user", "content": '求解sinx再x=3处的泰勒三阶展开式，并将最后答案放在{}中'}
     ],
     tokenize=False,
     add_generation_prompt=True,
@@ -49,107 +52,123 @@ q_text = tokenizer.apply_chat_template(
 base_input_ids = tokenizer(q_text, return_tensors='pt')['input_ids'].to(DEVICE)
 base_attention_mask = torch.ones_like(base_input_ids, device=DEVICE)
 
-max_new_tokens = 10240
+max_new_tokens = 4096
 temperature = 0.6
 top_k_sampling = 20
 top_p = 0.95
 eos = tokenizer.eos_token_id
 
-N_warmup = 16  # 离线 warmup traces 数量。设为 0 跳过 warmup（用 manual_threshold）
+N_warmup = 8  # 离线 warmup traces 数量。设为 0 跳过 warmup（用 manual_threshold）
 eta = 90  # 保留 top-eta% traces，阈值 s = percentile(100-eta)
 group_size = 1024  # 滑窗大小
 k_conf = 10  # token confidence 使用 top-k logprobs 的平均（k_conf >=1）
-num_traces = 16  # 主生成时要生成的 trace 数
+num_traces = 8  # 主生成时要生成的 trace 数
 manual_threshold = None
 
 
 def generate_trace_with_conf(model, base_input_ids, max_new_tokens, stop_threshold=None):
-    """
-    生成一条 trace；记录每个 token 的 token-confidence Ci = -mean(top_k logprobs)
-    计算 sliding group confidence = mean of last `group_size` Ci
-    若提供 stop_threshold，当 group_conf < stop_threshold 时提前停止（不将该 step 的 token 加入）
-    返回：generated_ids (torch.LongTensor), conf_list (list), min_group_conf (float)
-    """
-    input_ids = base_input_ids.clone()
-    attention_mask = torch.ones_like(input_ids, device=DEVICE)
-    conf_list = []
-    group_confs = []
+    all_confs = torch.zeros(max_new_tokens, device=DEVICE)
+    generated_tokens = torch.zeros(max_new_tokens, dtype=torch.long, device=DEVICE)
+    
+    past_key_values = None
+    current_input = base_input_ids.clone()
+    
     CompleteTrajectory = True
+    actual_length = 0
 
-    for step in range(max_new_tokens):
+    window_sum = 0.0
+    min_gconf = float('inf')
+    
+    for step in tqdm(range(max_new_tokens), desc='Generate Up Stage'):
         with torch.no_grad():
-            out = model(input_ids=input_ids, attention_mask=attention_mask)
+            out = model(
+                input_ids=current_input,
+                past_key_values=past_key_values,
+                use_cache=True
+            )
             logits = out.logits[:, -1, :]  # shape (1, V)
-        # token log-probs -> top-k for confidence
-        log_probs = F.log_softmax(logits, dim=-1)  # (1, V)
-        k = min(k_conf, log_probs.size(-1))
-        topk_vals, topk_idx = torch.topk(log_probs, k=k, dim=-1)  # (1, k)
-        Ci = - float(topk_vals.mean().item())
-        conf_list.append(Ci)
+            past_key_values = out.past_key_values
 
-        # compute group conf (sliding window mean of Ci)
-        window = conf_list[-group_size:] if group_size > 0 else conf_list
-        gc = float(np.mean(window))
-        group_confs.append(gc)
+        log_probs = F.log_softmax(logits, dim=-1)
+        topk_vals, _ = torch.topk(log_probs, k=k_conf, dim=-1)
+        Ci = -topk_vals.mean().item()
+        all_confs[step] = Ci
 
-        # pick next token following original sampling/greedy logic
+        window_sum += Ci
+        if group_size > 0 and step >= group_size:
+            window_sum -= all_confs[step - group_size].item()
+            gc = window_sum / group_size
+        else:
+            gc = window_sum / (step + 1)
+
+        if gc < min_gconf:
+            min_gconf = gc
+
         if temperature == 0.0:
-            _, idx_next = torch.topk(logits, k=1, dim=-1)  # greedy (1,1)
+            idx_next = torch.topk(logits, k=1, dim=-1)[1]
         else:
             lp = logits / temperature
-            k = top_k_sampling if top_k_sampling is not None else 0
-            if k > 0 or top_p < 1.0:
-                lp = top_k_top_p_filtering(lp, top_k=k, top_p=top_p)
-
+            k_samp = top_k_sampling if top_k_sampling is not None else 0
+            if k_samp > 0 or top_p < 1.0:
+                lp = top_k_top_p_filtering(lp.clone(), top_k=k_samp, top_p=top_p)
             probs = F.softmax(lp, dim=-1)
             idx_next = torch.multinomial(probs, num_samples=1)
+        
+        next_token_id = idx_next[0, 0].item()
 
-        next_token_id = int(idx_next[0, 0].item())
-
-        # online early-stop: if threshold set and current group_conf < threshold -> stop (do not append token)
         if (stop_threshold is not None) and (gc < stop_threshold):
             CompleteTrajectory = False
             break
 
-        input_ids = torch.cat((input_ids, idx_next), dim=1)
-        attention_mask = torch.cat(
-            (attention_mask, torch.ones((attention_mask.shape[0], 1), device=DEVICE, dtype=attention_mask.dtype)),
-            dim=1)
-
-        # if generated eos, stop (keep eos)
+        generated_tokens[actual_length] = next_token_id
+        actual_length += 1
+        current_input = idx_next
         if next_token_id == eos:
             break
 
-    min_gconf = float(np.min(group_confs)) if len(group_confs) > 0 else float('inf')
+    if actual_length > 0:
+        input_ids = torch.cat([
+            base_input_ids,
+            generated_tokens[:actual_length].unsqueeze(0)
+        ], dim=1)
+    else:
+        input_ids = base_input_ids.clone()
+
+    conf_list = all_confs[:actual_length].tolist() if actual_length > 0 else []
+    
     return input_ids, conf_list, min_gconf, CompleteTrajectory
 
 
 def generate_traces_batched(model, base_input_ids, max_new_tokens, num_traces):
-    """
-    并行生成多条 traces，用于 warmup
-    """
     batch_size = num_traces
     input_ids = base_input_ids.repeat(batch_size, 1)
-    attention_mask = torch.ones_like(input_ids, device=DEVICE)
 
-    conf_lists = [[] for _ in range(batch_size)]
-    group_confs_lists = [[] for _ in range(batch_size)]
-    min_gconfs = [float('inf')] * batch_size
+    all_confs = torch.zeros(max_new_tokens, batch_size, device=DEVICE)
 
     unfinished = torch.ones(batch_size, dtype=torch.bool, device=DEVICE)
+    finished_at_step = torch.full((batch_size,), max_new_tokens, dtype=torch.long, device=DEVICE)
 
-    for step in range(max_new_tokens):
+    past_key_values = None
+    current_input = input_ids
+
+    for step in tqdm(range(max_new_tokens), desc='Warm Up Stage'):
         if not torch.any(unfinished):
             break
 
         with torch.no_grad():
-            out = model(input_ids=input_ids, attention_mask=attention_mask)
-            logits = out.logits[:, -1, :]
+            out = model(
+                input_ids=current_input,
+                past_key_values=past_key_values,
+                use_cache=True
+            )
+            logits = out.logits[:, -1, :]  # (batch_size, vocab_size)
+            past_key_values = out.past_key_values
 
         log_probs = F.log_softmax(logits, dim=-1)
-        k = min(k_conf, log_probs.size(-1))
-        topk_vals, _ = torch.topk(log_probs, k=k, dim=-1)
-        Ci_batch = -topk_vals.mean(dim=-1)
+        topk_vals, _ = torch.topk(log_probs, k=k_conf, dim=-1)
+        Ci_batch = -topk_vals.mean(dim=-1)  # (batch_size,)
+
+        all_confs[step] = torch.where(unfinished, Ci_batch, torch.zeros_like(Ci_batch))
 
         if temperature == 0.0:
             idx_next = torch.topk(logits, k=1, dim=-1)[1]
@@ -157,48 +176,57 @@ def generate_traces_batched(model, base_input_ids, max_new_tokens, num_traces):
             lp = logits / temperature
             k_sampling = top_k_sampling if top_k_sampling is not None else 0
             if k_sampling > 0 or top_p < 1.0:
-                lp = top_k_top_p_filtering(lp, top_k=k_sampling, top_p=top_p)
+                lp = top_k_top_p_filtering(lp.clone(), top_k=k_sampling, top_p=top_p)
             probs = F.softmax(lp, dim=-1)
             idx_next = torch.multinomial(probs, num_samples=1)
 
         next_token_ids = idx_next.squeeze(-1)
 
-        for i in range(batch_size):
-            if unfinished[i]:
-                conf_lists[i].append(Ci_batch[i].item())
-                window = conf_lists[i][-group_size:] if group_size > 0 else conf_lists[i]
-                gc = float(np.mean(window))
-                group_confs_lists[i].append(gc)
+        just_finished = (next_token_ids == eos) & unfinished
+        finished_at_step = torch.where(just_finished,
+                                       torch.full_like(finished_at_step, step + 1),
+                                       finished_at_step)
+        unfinished = unfinished & (next_token_ids != eos)
 
-                if next_token_ids[i] == eos:
-                    unfinished[i] = False
-                    if len(group_confs_lists[i]) > 0:
-                        min_gconfs[i] = float(np.min(group_confs_lists[i]))
+        current_input = idx_next
 
-        input_ids = torch.cat((input_ids, idx_next), dim=1)
-        attention_mask = torch.cat(
-            (attention_mask, torch.ones((batch_size, 1), device=DEVICE, dtype=attention_mask.dtype)),
-            dim=1
-        )
-
+    min_gconfs = []
     for i in range(batch_size):
-        if unfinished[i]:
-            if len(group_confs_lists[i]) > 0:
-                min_gconfs[i] = float(np.min(group_confs_lists[i]))
+        seq_len = finished_at_step[i].item()
+        if seq_len == 0:
+            min_gconfs.append(float('inf'))
+            continue
+
+        confs = all_confs[:seq_len, i]
+        if group_size > 0 and seq_len >= group_size:
+            padded = F.pad(confs.unsqueeze(0), (group_size - 1, 0), mode='constant', value=0)
+            windows = padded.unfold(1, group_size, 1).squeeze(0)
+            indices_i = torch.arange(seq_len, device=DEVICE).unsqueeze(1)  # (seq_len, 1)
+            indices_j = torch.arange(group_size, device=DEVICE)  # (group_size,)
+            mask = (indices_i + indices_j) >= (group_size - 1)
+            valid_counts = mask.sum(dim=1).clamp(min=1).float()
+            window_sums = (windows * mask.float()).sum(dim=1)
+            group_confs = window_sums / valid_counts
+        else:
+            cumsum = torch.cumsum(confs, dim=0)
+            indices = torch.arange(1, seq_len + 1, device=DEVICE, dtype=torch.float)
+            group_confs = cumsum / indices
+
+        min_gconfs.append(group_confs.min().item())
 
     return min_gconfs
 
 
 # ------------------ offline warmup to estimate threshold s ------------------
 min_gconfs = []
-if N_warmup and N_warmup > 0:
+if manual_threshold is not None:
+    s = float(manual_threshold)
+    print(f"[warmup skipped] using manual threshold s={s:.6f}")
+elif N_warmup > 0:
     print(f"[warmup] running {N_warmup} warmup traces to estimate threshold (eta={eta}) ...")
     min_gconfs = generate_traces_batched(model, base_input_ids, max_new_tokens, N_warmup)
     s = float(np.percentile(np.array(min_gconfs), 100.0 - eta))
     print(f"[warmup] done. sample min_gconfs count={len(min_gconfs)}. threshold s={s:.6f}")
-elif manual_threshold is not None:
-    s = float(manual_threshold)
-    print(f"[warmup skipped] using manual threshold s={s:.6f}")
 
 # ------------------ main generation: generate num_traces traces with early stopping ------------------
 generated_traces = []

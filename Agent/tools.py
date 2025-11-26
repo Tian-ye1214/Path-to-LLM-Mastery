@@ -228,7 +228,10 @@ def fetch_webpage(url: str, extract_text: bool = True) -> str:
             for script in soup(['script', 'style', 'meta', 'link']):
                 script.decompose()
             
+            # 获取文本
             text = soup.get_text()
+            
+            # 清理空白字符
             lines = (line.strip() for line in text.splitlines())
             chunks = (phrase.strip() for line in lines for phrase in line.split("  "))
             text = '\n'.join(chunk for chunk in chunks if chunk)
@@ -433,6 +436,7 @@ def http_request(url: str, method: str = "GET", data: str = None, headers: str =
             timeout=30
         )
         
+        # 尝试格式化JSON响应
         try:
             resp_json = response.json()
             resp_text = json.dumps(resp_json, ensure_ascii=False, indent=2)

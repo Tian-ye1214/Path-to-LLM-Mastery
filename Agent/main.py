@@ -1,5 +1,6 @@
-import tools
+import BasicTools
 import ManagementTools
+import MultimodalTools
 from pydantic_ai import Agent, ModelSettings
 from pydantic_ai.models.openai import OpenAIChatModel
 from pydantic_ai.providers.openai import OpenAIProvider
@@ -34,27 +35,32 @@ def create_working_agent(model_name: str = "deepseek-chat", parameter: dict = No
 
     all_tools = [
         # 文件操作
-        tools.get_file_info,
-        tools.list_files,
-        tools.read_file,
-        tools.write_file,
-        tools.edit_file,
-        tools.append_file,
-        tools.copy_file,
-        tools.rename_file,
-        tools.delete_file,
+        BasicTools.get_file_info,
+        BasicTools.list_files,
+        BasicTools.read_file,
+        BasicTools.write_file,
+        BasicTools.edit_file,
+        BasicTools.append_file,
+        BasicTools.copy_file,
+        BasicTools.rename_file,
+        BasicTools.delete_file,
         # 目录操作
-        tools.create_directory,
-        tools.delete_directory,
+        BasicTools.create_directory,
+        BasicTools.delete_directory,
         # 搜索操作
-        tools.search_in_files,
-        tools.search_web,
+        BasicTools.search_in_files,
+        BasicTools.search_web,
         # 网络操作
-        tools.fetch_webpage,
-        tools.http_request,
+        BasicTools.fetch_webpage,
+        BasicTools.http_request,
         # 执行操作
-        tools.run_command,
-        tools.execute_file,
+        BasicTools.run_command,
+        BasicTools.execute_file,
+        # 多模态图像理解
+        MultimodalTools.analyze_local_image,
+        MultimodalTools.analyze_image_url,
+        MultimodalTools.analyze_multiple_images,
+        MultimodalTools.analyze_videos_url,
     ]
     
     model = create_model(model_name, parameter)
@@ -160,8 +166,8 @@ def run_multi_agent_system(user_input: str,
     try:
         manager_agent.run_sync(planning_prompt)
     except Exception as e:
-        print(f"❌ 任务规划失败: {e}")
-        return f"任务规划失败: {e}"
+        print(f"任务规划失败: {e}")
+        exit()
 
     print("\n" + "="*60)
     print("当前步骤: 开始执行任务...")
@@ -246,13 +252,11 @@ def run_multi_agent_system(user_input: str,
 
 def main():
     """主函数 - 交互式运行"""
-    print("\n" + "="*60)
-    print("🤖 多Agent任务执行系统")
     print("="*60)
     print("输入 '新任务' 可以清除上下文重新开始")
     print("输入 'quit' 或 'exit' 退出程序")
     print("="*60 + "\n")
-    
+
     while True:
         try:
             user_input = input("\n📝 请输入您的任务: ").strip()
@@ -270,7 +274,7 @@ def main():
                     print("请输入新的任务内容...")
                     continue
 
-            result = run_multi_agent_system(user_input)
+            result = run_multi_agent_system(user_input, manager_model='gpt-5.1', worker_model='gpt-5-mini')
             print('\n\nfinal result:', result)
             
         except KeyboardInterrupt:

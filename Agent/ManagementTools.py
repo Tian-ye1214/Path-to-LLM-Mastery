@@ -13,7 +13,7 @@ class TaskStatus(Enum):
 
 @dataclass
 class Task:
-    """任务数据结构"""
+    """Task data structure"""
     id: str
     description: str
     status: TaskStatus = TaskStatus.PENDING
@@ -25,7 +25,7 @@ class Task:
 
 
 class TaskManager:
-    """任务管理器 - 管理Todo List"""
+    """Task Manager - Manages the Todo List"""
     
     def __init__(self):
         self.tasks: Dict[str, Task] = {}
@@ -33,10 +33,10 @@ class TaskManager:
     
     def create_todo_list(self, tasks_json: str) -> str:
         """
-        根据JSON创建任务列表。
+        Create a task list from JSON.
         Parameters:
-            tasks_json: JSON格式的任务列表，格式为:
-                [{"id": "1", "description": "任务描述", "dependencies": ["依赖任务id"]}]
+            tasks_json: JSON format task list, format:
+                [{"id": "1", "description": "Task description", "dependencies": ["dependent task id"]}]
         """
         print(f"(create_todo_list)")
         try:
@@ -56,16 +56,16 @@ class TaskManager:
             
             return self._format_todo_list()
         except json.JSONDecodeError as e:
-            return f"错误: JSON解析失败 - {e}"
+            return f"Error: JSON parsing failed - {e}"
         except Exception as e:
-            return f"错误: 创建任务列表失败 - {e}"
+            return f"Error: Failed to create task list - {e}"
     
     def _format_todo_list(self) -> str:
-        """格式化输出Todo List"""
+        """Format and output the Todo List"""
         if not self.tasks:
-            return "任务列表为空"
+            return "Task list is empty"
         
-        lines = ["任务列表 (Todo List)", "=" * 40]
+        lines = ["Task List (Todo List)", "=" * 40]
         for task_id in self.task_order:
             task = self.tasks[task_id]
             status_icon = {
@@ -77,24 +77,21 @@ class TaskManager:
             
             line = f"{status_icon} [{task.id}] {task.description}"
             if task.dependencies:
-                line += f" (依赖: {', '.join(task.dependencies)})"
+                line += f" (Dependencies: {', '.join(task.dependencies)})"
             if task.retry_count > 0:
-                line += f" [重试: {task.retry_count}/{task.max_retries}]"
+                line += f" [Retry: {task.retry_count}/{task.max_retries}]"
             lines.append(line)
 
         completed = sum(1 for t in self.tasks.values() if t.status == TaskStatus.COMPLETED)
         total = len(self.tasks)
         lines.append("=" * 40)
-        lines.append(f"进度: {completed}/{total} ({completed/total*100:.1f}%)" if total > 0 else "进度: 0/0")
+        lines.append(f"Progress: {completed}/{total} ({completed/total*100:.1f}%)" if total > 0 else "Progress: 0/0")
         todo_list = "\n".join(lines)
-        print("=" * 60)
-        print("TODO LIST:\n" + todo_list)
-        print("=" * 60)
         
         return todo_list
     
     def get_next_task(self) -> Optional[Task]:
-        """获取下一个可执行的任务"""
+        """Get the next executable task"""
         for task_id in self.task_order:
             task = self.tasks[task_id]
             if task.status == TaskStatus.PENDING:
@@ -107,39 +104,39 @@ class TaskManager:
         return None
     
     def mark_task_in_progress(self, task_id: str) -> str:
-        """标记任务为执行中"""
+        """Mark a task as in progress"""
         if task_id not in self.tasks:
-            return f"错误: 任务 {task_id} 不存在"
+            return f"Error: Task {task_id} does not exist"
         self.tasks[task_id].status = TaskStatus.IN_PROGRESS
-        return f"任务 {task_id} 已开始执行"
+        return f"Task {task_id} has started execution"
     
     def mark_task_complete(self, task_id: str, result: str = "") -> str:
         """
-        标记任务为已完成。
+        Mark a task as completed.
         Parameters:
-            task_id: 任务ID
-            result: 任务执行结果
+            task_id: Task ID
+            result: Task execution result
         """
         print(f"(mark_task_complete {task_id})")
         if task_id not in self.tasks:
-            return f"错误: 任务 {task_id} 不存在"
+            return f"Error: Task {task_id} does not exist"
         
         task = self.tasks[task_id]
         task.status = TaskStatus.COMPLETED
         task.result = result
         
-        return f"✅ 任务 [{task_id}] 已完成\n{self._format_todo_list()}"
+        return f"Task [{task_id}] completed\n{self._format_todo_list()}"
     
     def mark_task_failed(self, task_id: str, reason: str) -> str:
         """
-        记录任务失败并增加重试次数。
+        Record task failure and increment retry count.
         Parameters:
-            task_id: 任务ID
-            reason: 失败原因
+            task_id: Task ID
+            reason: Failure reason
         """
         print(f"(mark_task_failed {task_id})")
         if task_id not in self.tasks:
-            return f"错误: 任务 {task_id} 不存在"
+            return f"Error: Task {task_id} does not exist"
         
         task = self.tasks[task_id]
         task.failure_history.append(reason)
@@ -147,42 +144,42 @@ class TaskManager:
         
         if task.retry_count >= task.max_retries:
             task.status = TaskStatus.FAILED
-            return f"❌ 任务 [{task_id}] 已达到最大重试次数 ({task.max_retries}次)\n失败历史:\n" + \
-                   "\n".join([f"  第{i+1}次: {r}" for i, r in enumerate(task.failure_history)])
+            return f"Task [{task_id}] has reached maximum retry attempts ({task.max_retries})\nFailure history:\n" + \
+                   "\n".join([f"  Attempt {i+1}: {r}" for i, r in enumerate(task.failure_history)])
         else:
-            task.status = TaskStatus.PENDING  # 重置为待执行，等待重试
-            return f"⚠️ 任务 [{task_id}] 执行失败，准备第 {task.retry_count + 1} 次重试\n" + \
-                   f"失败原因: {reason}\n" + \
-                   f"剩余重试次数: {task.max_retries - task.retry_count}"
+            task.status = TaskStatus.PENDING  # Reset to pending, waiting for retry
+            return f"Task [{task_id}] execution failed, preparing retry attempt {task.retry_count + 1}\n" + \
+                   f"Failure reason: {reason}\n" + \
+                   f"Remaining retries: {task.max_retries - task.retry_count}"
     
     def can_retry(self, task_id: str) -> bool:
-        """检查任务是否还可以重试"""
+        """Check if a task can still be retried"""
         if task_id not in self.tasks:
             return False
         task = self.tasks[task_id]
         return task.retry_count < task.max_retries
     
     def get_task_status(self, task_id: str) -> str:
-        """获取任务状态"""
+        """Get task status"""
         if task_id not in self.tasks:
-            return f"错误: 任务 {task_id} 不存在"
+            return f"Error: Task {task_id} does not exist"
         task = self.tasks[task_id]
-        return f"任务 [{task_id}]: {task.status.value}\n描述: {task.description}\n结果: {task.result or '无'}"
+        return f"Task [{task_id}]: {task.status.value}\nDescription: {task.description}\nResult: {task.result or 'None'}"
     
     def get_todo_list(self) -> str:
-        """获取当前Todo List状态"""
+        """Get current Todo List status"""
         print("(get_todo_list)")
         return self._format_todo_list()
     
     def is_all_completed(self) -> bool:
-        """检查是否所有任务都已完成"""
+        """Check if all tasks are completed"""
         return all(
             task.status == TaskStatus.COMPLETED 
             for task in self.tasks.values()
         )
     
     def has_failed_tasks(self) -> bool:
-        """检查是否有失败的任务"""
+        """Check if there are any failed tasks"""
         return any(
             task.status == TaskStatus.FAILED 
             for task in self.tasks.values()
@@ -190,12 +187,12 @@ class TaskManager:
     
     def get_final_summary(self) -> str:
         """
-        生成最终任务执行总结报告。
+        Generate the final task execution summary report.
         """
         print("(get_final_summary)")
         lines = [
             "=" * 50,
-            "📊 任务执行总结报告",
+            "📊 Task Execution Summary Report",
             "=" * 50,
             ""
         ]
@@ -210,37 +207,36 @@ class TaskManager:
             elif task.status == TaskStatus.FAILED:
                 failed_tasks.append(task)
 
-        lines.append(f"✅ 已完成任务: {len(completed_tasks)}/{len(self.tasks)}")
+        lines.append(f"✅ Completed Tasks: {len(completed_tasks)}/{len(self.tasks)}")
         lines.append("-" * 40)
         for task in completed_tasks:
             lines.append(f"  [{task.id}] {task.description}")
             if task.result:
-                # 缩进结果显示
                 result_lines = task.result.split('\n')
-                for rl in result_lines[:5]:  # 最多显示5行结果
+                for rl in result_lines[:5]:
                     lines.append(f"      → {rl}")
                 if len(result_lines) > 5:
-                    lines.append(f"      ... (还有 {len(result_lines) - 5} 行)")
+                    lines.append(f"      ... ({len(result_lines) - 5} more lines)")
 
         if failed_tasks:
             lines.append("")
-            lines.append(f"❌ 失败任务: {len(failed_tasks)}")
+            lines.append(f"❌ Failed Tasks: {len(failed_tasks)}")
             lines.append("-" * 40)
             for task in failed_tasks:
                 lines.append(f"  [{task.id}] {task.description}")
-                lines.append(f"      重试次数: {task.retry_count}")
+                lines.append(f"      Retry count: {task.retry_count}")
                 if task.failure_history:
-                    lines.append(f"      最后失败原因: {task.failure_history[-1]}")
+                    lines.append(f"      Last failure reason: {task.failure_history[-1]}")
         
         lines.append("")
         lines.append("=" * 50)
 
         if self.is_all_completed():
-            lines.append("所有任务已成功完成！")
+            lines.append("All tasks completed successfully!")
         elif self.has_failed_tasks():
-            lines.append("⚠部分任务执行失败，请查看失败原因。")
+            lines.append("⚠️ Some tasks failed. Please review the failure reasons.")
         else:
-            lines.append("任务执行中...")
+            lines.append("Tasks in progress...")
         
         return "\n".join(lines)
 
@@ -250,81 +246,80 @@ task_manager = TaskManager()
 
 def create_todo_list(tasks_json: str) -> str:
     """
-    创建任务列表（Todo List）。
+    Create a task list (Todo List).
     Parameters:
-        tasks_json: JSON格式的任务列表，格式为:
-            [{"id": "1", "description": "任务描述", "dependencies": []}]
-    示例:
-        create_todo_list('[{"id": "1", "description": "搜索相关信息"}, {"id": "2", "description": "下载文件", "dependencies": ["1"]}]')
+        tasks_json: JSON format task list, format:
+            [{"id": "1", "description": "Task description", "dependencies": []}]
+    Example:
+        create_todo_list('[{"id": "1", "description": "Search for relevant information"}, {"id": "2", "description": "Download files", "dependencies": ["1"]}]')
     """
     return task_manager.create_todo_list(tasks_json)
 
 
 def get_todo_list() -> str:
     """
-    获取当前任务列表状态。
+    Get the current task list status.
     """
     return task_manager.get_todo_list()
 
 
 def mark_task_complete(task_id: str, result: str) -> str:
     """
-    标记任务已完成。
+    Mark a task as completed.
     Parameters:
-        task_id: 任务ID
-        result: 任务执行结果描述
+        task_id: Task ID
+        result: Task execution result description
     """
     return task_manager.mark_task_complete(task_id, result)
 
 
 def mark_task_failed(task_id: str, reason: str) -> str:
     """
-    标记任务失败并记录原因。会自动增加重试计数。
+    Mark a task as failed and record the reason. Automatically increments retry count.
     Parameters:
-        task_id: 任务ID
-        reason: 失败原因
+        task_id: Task ID
+        reason: Failure reason
     """
     return task_manager.mark_task_failed(task_id, reason)
 
 
 def get_final_summary() -> str:
     """
-    获取最终任务执行总结报告。
-    在所有任务执行完毕后调用。
+    Get the final task execution summary report.
+    Call this after all tasks have been executed.
     """
     return task_manager.get_final_summary()
 
 
 def get_next_pending_task() -> str:
     """
-    获取下一个待执行的任务。
-    会自动考虑任务依赖关系。
+    Get the next pending task.
+    Automatically considers task dependencies.
     """
     print("(get_next_pending_task)")
     task = task_manager.get_next_task()
     if task:
         task_manager.mark_task_in_progress(task.id)
-        return f"📌 下一个任务:\nID: {task.id}\n描述: {task.description}\n" + \
-               (f"当前重试次数: {task.retry_count}/{task.max_retries}" if task.retry_count > 0 else "")
+        return f"Next Task:\nID: {task.id}\nDescription: {task.description}\n" + \
+               (f"Current retry count: {task.retry_count}/{task.max_retries}" if task.retry_count > 0 else "")
     else:
         if task_manager.is_all_completed():
-            return "✅ 所有任务已完成！"
+            return "All tasks completed!"
         elif task_manager.has_failed_tasks():
-            return "❌ 存在无法完成的任务，请查看失败详情。"
+            return "Some tasks could not be completed. Please review failure details."
         else:
-            return "⏳ 当前没有可执行的任务（可能在等待依赖任务完成）"
+            return "No executable tasks at the moment (may be waiting for dependent tasks to complete)"
 
 
 def check_task_can_retry(task_id: str) -> str:
     """
-    检查任务是否还可以重试。
+    Check if a task can still be retried.
     Parameters:
-        task_id: 任务ID
+        task_id: Task ID
     """
     can_retry = task_manager.can_retry(task_id)
     task = task_manager.tasks.get(task_id)
     if task:
-        return f"任务 [{task_id}] {'可以重试' if can_retry else '已达到最大重试次数'}\n" + \
-               f"当前重试次数: {task.retry_count}/{task.max_retries}"
-    return f"错误: 任务 {task_id} 不存在"
-
+        return f"Task [{task_id}] {'can be retried' if can_retry else 'has reached maximum retry attempts'}\n" + \
+               f"Current retry count: {task.retry_count}/{task.max_retries}"
+    return f"Error: Task {task_id} does not exist"

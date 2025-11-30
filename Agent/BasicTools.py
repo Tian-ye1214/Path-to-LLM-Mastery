@@ -11,19 +11,19 @@ base_dir = Path("./WorkDatabase")
 
 
 def _safe_path(name: str) -> Path:
-    """确保路径在base_dir内，防止路径遍历攻击"""
+    """Ensure path is within base_dir to prevent path traversal attacks"""
     path = (base_dir / name).resolve()
     if not str(path).startswith(str(base_dir.resolve())):
-        raise ValueError("路径越界：不允许访问base_dir之外的文件")
+        raise ValueError("Path traversal detected: access outside base_dir is not allowed")
     return path
 
 
 def read_file(name: str, max_lines: int = None) -> str:
     """
-    读取文件内容。
+    Read file contents.
     Parameters:
-        name: 文件名/路径
-        max_lines: 可选，最大读取行数（防止大文件溢出上下文）
+        name: File name/path
+        max_lines: Optional, maximum number of lines to read (prevents context overflow for large files)
     """
     print(f"(read_file {name}, max_lines={max_lines})")
     try:
@@ -33,51 +33,51 @@ def read_file(name: str, max_lines: int = None) -> str:
                 lines = []
                 for i, line in enumerate(f):
                     if i >= max_lines:
-                        lines.append(f"\n... 文件已截断，共读取 {max_lines} 行 ...")
+                        lines.append(f"\n... File truncated, read {max_lines} lines ...")
                         break
                     lines.append(line)
                 content = "".join(lines)
             else:
                 content = f.read()
-        return content if content else "文件为空"
+        return content if content else "File is empty"
     except ValueError as e:
-        return f"安全错误: {e}"
+        return f"Security error: {e}"
     except Exception as e:
-        return f"读取错误: {e}"
+        return f"Read error: {e}"
 
 def list_files(directory: str = "") -> str:
     """
-    列出目录中的所有文件和文件夹。
+    List all files and folders in a directory.
     Parameters:
-        directory: 可选，子目录路径，默认为根目录
+        directory: Optional, subdirectory path, defaults to root directory
     """
     print(f"(list_files {directory})")
     try:
         target_dir = _safe_path(directory) if directory else base_dir
         if not target_dir.exists():
-            return f"错误: 目录 '{directory}' 不存在"
+            return f"Error: Directory '{directory}' does not exist"
         
         items = []
         for item in sorted(target_dir.iterdir()):
             rel_path = str(item.relative_to(base_dir))
             if item.is_dir():
-                items.append(f"📁 {rel_path}/")
+                items.append(f"{rel_path}/")
             else:
                 size = item.stat().st_size
-                items.append(f"📄 {rel_path} ({size} bytes)")
+                items.append(f"{rel_path} ({size} bytes)")
         
-        return "\n".join(items) if items else "目录为空"
+        return "\n".join(items) if items else "Directory is empty"
     except ValueError as e:
-        return f"安全错误: {e}"
+        return f"Security error: {e}"
     except Exception as e:
-        return f"列出文件错误: {e}"
+        return f"Error listing files: {e}"
 
 def rename_file(name: str, new_name: str) -> str:
     """
-    重命名或移动文件。
+    Rename or move a file.
     Parameters:
-        name: 原文件名/路径
-        new_name: 新文件名/路径
+        name: Original file name/path
+        new_name: New file name/path
     """
     print(f"(rename_file {name} -> {new_name})")
     try:
@@ -85,40 +85,40 @@ def rename_file(name: str, new_name: str) -> str:
         new_path = _safe_path(new_name)
         
         if not old_path.exists():
-            return f"错误: 文件 '{name}' 不存在"
+            return f"Error: File '{name}' does not exist"
         
         os.makedirs(new_path.parent, exist_ok=True)
         os.rename(old_path, new_path)
-        return f"文件 '{name}' 已重命名为 '{new_name}'"
+        return f"File '{name}' has been renamed to '{new_name}'"
     except ValueError as e:
-        return f"安全错误: {e}"
+        return f"Security error: {e}"
     except Exception as e:
-        return f"重命名错误: {e}"
+        return f"Rename error: {e}"
 
 def delete_file(name: str) -> str:
     """
-    删除文件。
+    Delete a file.
     Parameters:
-        name: 要删除的文件名/路径
+        name: File name/path to delete
     """
     print(f"(delete_file {name})")
     try:
         file_path = _safe_path(name)
         if not file_path.exists():
-            return f"错误: 文件 '{name}' 不存在"
+            return f"File '{name}' does not exist"
         os.remove(file_path)
-        return f"文件 '{name}' 已删除"
+        return f"File '{name}' has been deleted"
     except ValueError as e:
-        return f"安全错误: {e}"
+        return f"Security error: {e}"
     except Exception as e:
-        return f"删除错误: {e}"
+        return f"Delete error: {e}"
 
 def write_file(name: str, content: str) -> str:
     """
-    创建或覆盖写入文件。
+    Create or overwrite a file.
     Parameters:
-        name: 文件名/路径
-        content: 要写入的内容
+        name: File name/path
+        content: Content to write
     """
     print(f"(write_file {name})")
     try:
@@ -126,26 +126,25 @@ def write_file(name: str, content: str) -> str:
         os.makedirs(file_path.parent, exist_ok=True)
         with open(file_path, "w", encoding="utf-8") as f:
             f.write(content)
-        return f"文件 '{name}' 写入成功 ({len(content)} 字符)"
+        return f"File '{name}' written successfully ({len(content)} characters)"
     except ValueError as e:
-        return f"安全错误: {e}"
+        return f"Security error: {e}"
     except Exception as e:
-        return f"写入错误: {e}"
+        return f"Write error: {e}"
 
 def execute_file(name: str, args: str = "") -> str:
     """
-    执行文件（支持Python、JavaScript、Shell脚本等）。
+    Execute a file (supports Python, Shell scripts, etc.).
     Parameters:
-        name: 要执行的文件名/路径
-        args: 可选，传递给脚本的命令行参数
+        name: File name/path to execute
+        args: Optional, command-line arguments to pass to the script
     """
     print(f"(execute_file {name} {args})")
     try:
         file_path = _safe_path(name)
         if not file_path.exists():
-            return f"错误: 文件 '{name}' 不存在"
+            return f"Error: File '{name}' does not exist"
 
-        # 根据文件扩展名选择执行器
         ext = file_path.suffix.lower()
         executors = {
             ".py": ["python"],
@@ -156,7 +155,7 @@ def execute_file(name: str, args: str = "") -> str:
         }
         
         if ext not in executors:
-            return f"错误: 不支持的文件类型 '{ext}'。支持: {', '.join(executors.keys())}"
+            return f"Error: Unsupported file type '{ext}'. Supported: {', '.join(executors.keys())}"
         
         cmd = executors[ext] + [str(file_path)]
         if args:
@@ -173,16 +172,17 @@ def execute_file(name: str, args: str = "") -> str:
         )
         output = result.stdout + result.stderr
         return_code = result.returncode
-        return f"返回码: {return_code}\n输出:\n{output}" if output else f"执行完成，返回码: {return_code}"
+        return f"Return code: {return_code}\nOutput:\n{output}" if output else f"Execution completed, return code: {return_code}"
     except subprocess.TimeoutExpired:
-        return "错误: 执行超时（60秒）"
+        return "Error: Execution timed out (60 seconds)"
     except ValueError as e:
-        return f"安全错误: {e}"
+        return f"Security error: {e}"
     except Exception as e:
-        return f"执行错误: {e}"
+        return f"Execution error: {e}"
 
 def search_web(query: str, max_results: int = 5) -> str:
-    """Search web pages. Returns a list of search results (title, link, summary).
+    """
+    Search web pages. Returns a list of search results (title, link, summary).
     Parameters:
         query: Search keywords
         max_results: Maximum number of results to return, defaults to 5
@@ -193,22 +193,22 @@ def search_web(query: str, max_results: int = 5) -> str:
             results = list(ddgs.text(query, max_results=max_results, region='cn-zh'))
         
         if not results:
-            return "未找到相关搜索结果。"
+            return "No relevant search results found."
         
         output = []
         for i, result in enumerate(results, 1):
-            title = result.get('title', '无标题')
-            link = result.get('href', '无链接')
-            snippet = result.get('body', '无摘要')
-            output.append(f"{i}. {title}\n   链接: {link}\n   摘要: {snippet}\n")
+            title = result.get('title', 'No title')
+            link = result.get('href', 'No link')
+            snippet = result.get('body', 'No summary')
+            output.append(f"{i}. {title}\n   Link: {link}\n   Summary: {snippet}\n")
         
         return "\n".join(output)
     except Exception as e:
-        return f"搜索时发生错误: {e}"
+        return f"Error during search: {e}"
 
 def fetch_webpage(url: str, extract_text: bool = True) -> str:
     """
-    Fetches webpage content. Can return plain text or HTML content.
+    Fetch webpage content. Can return plain text or HTML content.
     Parameters:
         url: The URL of the webpage to fetch
         extract_text: If True, returns the extracted plain text; if False, returns the raw HTML
@@ -227,31 +227,28 @@ def fetch_webpage(url: str, extract_text: bool = True) -> str:
 
             for script in soup(['script', 'style', 'meta', 'link']):
                 script.decompose()
-            
-            # 获取文本
+
             text = soup.get_text()
-            
-            # 清理空白字符
             lines = (line.strip() for line in text.splitlines())
             chunks = (phrase.strip() for line in lines for phrase in line.split("  "))
             text = '\n'.join(chunk for chunk in chunks if chunk)
             
-            return f"网页标题: {soup.title.string if soup.title else '无标题'}\n\n内容:\n{text[:5000]}{'...' if len(text) > 5000 else ''}"
+            return f"Page Title: {soup.title.string if soup.title else 'No title'}\n\nContent:\n{text[:5000]}{'...' if len(text) > 5000 else ''}"
         else:
             return response.text[:10000] + ('...' if len(response.text) > 10000 else '')
     
     except requests.exceptions.RequestException as e:
-        return f"抓取网页时发生错误: {e}"
+        return f"Error fetching webpage: {e}"
     except Exception as e:
-        return f"处理网页内容时发生错误: {e}"
+        return f"Error processing webpage content: {e}"
 
 
 def run_command(command: str, timeout: int = 60) -> str:
     """
-    执行Shell/终端命令。
+    Execute a Shell/terminal command.
     Parameters:
-        command: 要执行的命令
-        timeout: 超时时间（秒），默认60秒
+        command: Command to execute
+        timeout: Timeout in seconds, defaults to 60
     """
     print(f"(run_command: {command})")
     try:
@@ -267,51 +264,51 @@ def run_command(command: str, timeout: int = 60) -> str:
         )
         output = result.stdout + result.stderr
         return_code = result.returncode
-        return f"返回码: {return_code}\n输出:\n{output}" if output else f"执行完成，返回码: {return_code}"
+        return f"Return code: {return_code}\nOutput:\n{output}" if output else f"Execution completed, return code: {return_code}"
     except subprocess.TimeoutExpired:
-        return f"错误: 命令执行超时（{timeout}秒）"
+        return f"Error: Command execution timed out ({timeout} seconds)"
     except Exception as e:
-        return f"执行错误: {e}"
+        return f"Execution error: {e}"
 
 
 def edit_file(name: str, old_text: str, new_text: str) -> str:
     """
-    编辑文件，将old_text替换为new_text（只替换第一次出现）。
+    Edit a file by replacing old_text with new_text (replaces first occurrence only).
     Parameters:
-        name: 文件名/路径
-        old_text: 要替换的原文本
-        new_text: 替换后的新文本
+        name: File name/path
+        old_text: Original text to replace
+        new_text: New text to substitute
     """
     print(f"(edit_file {name})")
     try:
         file_path = _safe_path(name)
         if not file_path.exists():
-            return f"错误: 文件 '{name}' 不存在"
+            return f"Error: File '{name}' does not exist"
         
         with open(file_path, "r", encoding="utf-8") as f:
             content = f.read()
         
         if old_text not in content:
-            return f"错误: 未找到要替换的文本"
+            return f"Error: Text to replace not found"
         
         new_content = content.replace(old_text, new_text, 1)
         
         with open(file_path, "w", encoding="utf-8") as f:
             f.write(new_content)
         
-        return f"文件 '{name}' 编辑成功"
+        return f"File '{name}' edited successfully"
     except ValueError as e:
-        return f"安全错误: {e}"
+        return f"Security error: {e}"
     except Exception as e:
-        return f"编辑错误: {e}"
+        return f"Edit error: {e}"
 
 
 def append_file(name: str, content: str) -> str:
     """
-    追加内容到文件末尾。
+    Append content to the end of a file.
     Parameters:
-        name: 文件名/路径
-        content: 要追加的内容
+        name: File name/path
+        content: Content to append
     """
     print(f"(append_file {name})")
     try:
@@ -319,19 +316,19 @@ def append_file(name: str, content: str) -> str:
         os.makedirs(file_path.parent, exist_ok=True)
         with open(file_path, "a", encoding="utf-8") as f:
             f.write(content)
-        return f"内容已追加到 '{name}'"
+        return f"Content appended to '{name}'"
     except ValueError as e:
-        return f"安全错误: {e}"
+        return f"Security error: {e}"
     except Exception as e:
-        return f"追加错误: {e}"
+        return f"Append error: {e}"
 
 
 def search_in_files(keyword: str, file_extension: str = None) -> str:
     """
-    在文件中搜索关键词。
+    Search for a keyword in files.
     Parameters:
-        keyword: 要搜索的关键词
-        file_extension: 可选，限制搜索的文件类型，如 ".py", ".txt"
+        keyword: Keyword to search for
+        file_extension: Optional, limit search to specific file types, e.g., ".py", ".txt"
     """
     print(f"(search_in_files keyword='{keyword}', ext={file_extension})")
     results = []
@@ -351,71 +348,71 @@ def search_in_files(keyword: str, file_extension: str = None) -> str:
                 continue
         
         if results:
-            output = f"找到 {len(results)} 处匹配:\n" + "\n".join(results[:50])
+            output = f"Found {len(results)} matches:\n" + "\n".join(results[:50])
             if len(results) > 50:
-                output += f"\n... 还有 {len(results) - 50} 处匹配未显示"
+                output += f"\n... {len(results) - 50} more matches not shown"
             return output
-        return "未找到匹配内容"
+        return "No matches found"
     except Exception as e:
-        return f"搜索错误: {e}"
+        return f"Search error: {e}"
 
 
 def create_directory(name: str) -> str:
     """
-    创建目录。
+    Create a directory.
     Parameters:
-        name: 目录名/路径
+        name: Directory name/path
     """
     print(f"(create_directory {name})")
     try:
         dir_path = _safe_path(name)
         os.makedirs(dir_path, exist_ok=True)
-        return f"目录 '{name}' 创建成功"
+        return f"Directory '{name}' created successfully"
     except ValueError as e:
-        return f"安全错误: {e}"
+        return f"Security error: {e}"
     except Exception as e:
-        return f"创建目录错误: {e}"
+        return f"Error creating directory: {e}"
 
 
 def delete_directory(name: str, force: bool = False) -> str:
     """
-    删除目录。
+    Delete a directory.
     Parameters:
-        name: 目录名/路径
-        force: 是否强制删除非空目录
+        name: Directory name/path
+        force: Whether to force delete non-empty directories
     """
     print(f"(delete_directory {name}, force={force})")
     try:
         import shutil
         dir_path = _safe_path(name)
         if not dir_path.exists():
-            return f"错误: 目录 '{name}' 不存在"
+            return f"Error: Directory '{name}' does not exist"
         if not dir_path.is_dir():
-            return f"错误: '{name}' 不是目录"
+            return f"Error: '{name}' is not a directory"
         
         if force:
             shutil.rmtree(dir_path)
         else:
-            os.rmdir(dir_path)  # 只能删除空目录
-        return f"目录 '{name}' 已删除"
+            os.rmdir(dir_path)  # Can only delete empty directories
+        return f"Directory '{name}' has been deleted"
     except OSError as e:
         if "not empty" in str(e).lower() or "目录不是空的" in str(e):
-            return f"错误: 目录非空，请设置 force=True 强制删除"
-        return f"删除错误: {e}"
+            return f"Error: Directory is not empty, set force=True to force delete"
+        return f"Delete error: {e}"
     except ValueError as e:
-        return f"安全错误: {e}"
+        return f"Security error: {e}"
     except Exception as e:
-        return f"删除错误: {e}"
+        return f"Delete error: {e}"
 
 
 def http_request(url: str, method: str = "GET", data: str = None, headers: str = None) -> str:
     """
-    发送HTTP请求（通用API调用）。
+    Send an HTTP request (general API call).
     Parameters:
-        url: 请求URL
-        method: 请求方法 (GET, POST, PUT, DELETE, PATCH)
-        data: 请求体数据（JSON字符串格式）
-        headers: 请求头（JSON字符串格式）
+        url: Request URL
+        method: Request method (GET, POST, PUT, DELETE, PATCH)
+        data: Request body data (JSON string format)
+        headers: Request headers (JSON string format)
     """
     print(f"(http_request {method} {url})")
     try:
@@ -435,65 +432,62 @@ def http_request(url: str, method: str = "GET", data: str = None, headers: str =
             headers=req_headers, 
             timeout=30
         )
-        
-        # 尝试格式化JSON响应
         try:
             resp_json = response.json()
             resp_text = json.dumps(resp_json, ensure_ascii=False, indent=2)
         except:
             resp_text = response.text
         
-        return f"状态码: {response.status_code}\n响应:\n{resp_text[:8000]}{'...' if len(resp_text) > 8000 else ''}"
+        return f"Status code: {response.status_code}\nResponse:\n{resp_text[:8000]}{'...' if len(resp_text) > 8000 else ''}"
     except json.JSONDecodeError as e:
-        return f"JSON解析错误: {e}"
+        return f"JSON parsing error: {e}"
     except requests.exceptions.RequestException as e:
-        return f"请求错误: {e}"
+        return f"Request error: {e}"
     except Exception as e:
-        return f"错误: {e}"
+        return f"Error: {e}"
 
 
 def get_file_info(name: str) -> str:
     """
-    获取文件详细信息（大小、修改时间、行数等）。
+    Get detailed file information (size, modification time, line count, etc.).
     Parameters:
-        name: 文件名/路径
+        name: File name/path
     """
     print(f"(get_file_info {name})")
     try:
         file_path = _safe_path(name)
         if not file_path.exists():
-            return f"错误: 文件 '{name}' 不存在"
+            return f"Error: File '{name}' does not exist"
         
         stat = file_path.stat()
         info = [
-            f"文件: {name}",
-            f"大小: {stat.st_size} bytes",
-            f"修改时间: {datetime.datetime.fromtimestamp(stat.st_mtime).strftime('%Y-%m-%d %H:%M:%S')}",
-            f"创建时间: {datetime.datetime.fromtimestamp(stat.st_ctime).strftime('%Y-%m-%d %H:%M:%S')}",
+            f"File: {name}",
+            f"Size: {stat.st_size} bytes",
+            f"Modified: {datetime.datetime.fromtimestamp(stat.st_mtime).strftime('%Y-%m-%d %H:%M:%S')}",
+            f"Created: {datetime.datetime.fromtimestamp(stat.st_ctime).strftime('%Y-%m-%d %H:%M:%S')}",
         ]
-        
-        # 如果是文本文件，统计行数
+
         if file_path.is_file():
             try:
                 with open(file_path, "r", encoding="utf-8", errors="ignore") as f:
                     line_count = sum(1 for _ in f)
-                info.append(f"行数: {line_count}")
+                info.append(f"Lines: {line_count}")
             except:
                 pass
         
         return "\n".join(info)
     except ValueError as e:
-        return f"安全错误: {e}"
+        return f"Security error: {e}"
     except Exception as e:
-        return f"获取信息错误: {e}"
+        return f"Error getting file info: {e}"
 
 
 def copy_file(source: str, destination: str) -> str:
     """
-    复制文件。
+    Copy a file.
     Parameters:
-        source: 源文件路径
-        destination: 目标文件路径
+        source: Source file path
+        destination: Destination file path
     """
     print(f"(copy_file {source} -> {destination})")
     try:
@@ -502,12 +496,12 @@ def copy_file(source: str, destination: str) -> str:
         dst_path = _safe_path(destination)
         
         if not src_path.exists():
-            return f"错误: 源文件 '{source}' 不存在"
+            return f"Error: Source file '{source}' does not exist"
         
         os.makedirs(dst_path.parent, exist_ok=True)
         shutil.copy2(src_path, dst_path)
-        return f"文件已复制: '{source}' -> '{destination}'"
+        return f"File copied: '{source}' -> '{destination}'"
     except ValueError as e:
-        return f"安全错误: {e}"
+        return f"Security error: {e}"
     except Exception as e:
-        return f"复制错误: {e}"
+        return f"Copy error: {e}"

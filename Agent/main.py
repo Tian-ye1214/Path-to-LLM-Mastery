@@ -99,44 +99,53 @@ def create_management_agent(model_name: str = "deepseek-reasoner", parameter: di
     return agent
 
 
-def execute_task_with_worker(worker_agent: Agent, task_description: str, retry_info: str = "") -> Tuple[bool, str]:
+def execute_task_with_worker(worker_agent: Agent, task_description: str, 
+                              user_goal: str = "", retry_info: str = "", 
+                              history: list = None) -> Tuple[bool, str, list]:
     """
     使用工作Agent执行任务
-    返回: (是否成功, 结果/失败原因)
+    返回: (是否成功, 结果/失败原因, 更新后的历史消息)
     """
-    prompt = f"请执行以下任务:\n\n{task_description}"
+    prompt = f"【用户最终目标】\n{user_goal}\n\n【当前任务】\n请执行以下任务:\n\n{task_description}"
     if retry_info:
         prompt += f"\n\n这是重试执行，之前的失败信息:\n{retry_info}\n请尝试用不同的方法完成任务。"
     
     try:
         print(f"\n{'='*50}")
         print(f"Working Agent 开始执行任务...")
-        print(f"任务: {task_description}")
+        print(f"当前任务: {task_description}")
         if retry_info:
             print(f"重试信息: {retry_info}")
         print(f"{'='*50}")
+
+        result = worker_agent.run_sync(prompt, message_history=history)
         
-        result = worker_agent.run_sync(prompt)
         output = result.output
+        history = list(result.all_messages())
+
+        print(f"\n{'='*50}")
+        print(history)
+        print(f"\n{'='*50}")
         
         print(f"\nWorking Agent 返回:\n{output}\n")
 
         if "SUCCESS" in output.upper() or "成功" in output:
-            return True, output
+            return True, output, history
         elif "FAILED" in output.upper() or "失败" in output or "错误" in output:
-            return False, output
+            return False, output, history
         else:
-            return True, output
+            return True, output, history
             
     except Exception as e:
         error_msg = f"执行异常: {str(e)}"
         print(f"❌ {error_msg}")
-        return False, error_msg
+        return False, error_msg, history or []
 
 
-def run_multi_agent_system(user_input: str, 
+def run_multi_agent_system(user_input: str,
                            manager_model: str = "deepseek-reasoner",
-                           worker_model: str = "deepseek-chat"):
+                           worker_model: str = "deepseek-chat",
+                           manager_history: list = [],):
     """
     运行多Agent系统
     
@@ -146,11 +155,7 @@ def run_multi_agent_system(user_input: str,
     3. 处理任务结果，失败则重试（最多3次）
     4. 所有任务完成后生成最终报告
     """
-    print("\n" + "="*60)
-    print("调度开始……")
-    print("="*60)
-    ManagementTools.task_manager = ManagementTools.TaskManager()
-
+    worker_history = []
     manager_agent = create_management_agent(manager_model)
     worker_agent = create_working_agent(worker_model)
 
@@ -164,7 +169,8 @@ def run_multi_agent_system(user_input: str,
 """
     
     try:
-        manager_agent.run_sync(planning_prompt)
+        result = manager_agent.run_sync(planning_prompt, message_history=manager_history)
+        manager_history = result.all_messages()
     except Exception as e:
         print(f"任务规划失败: {e}")
         exit()
@@ -180,6 +186,7 @@ def run_multi_agent_system(user_input: str,
         iteration += 1
 
         task_manager = ManagementTools.task_manager
+        print(f"\n{task_manager.get_todo_list()}\n")
         next_task = task_manager.get_next_task()
         
         if next_task is None:
@@ -208,10 +215,12 @@ def run_multi_agent_system(user_input: str,
                 for i, reason in enumerate(next_task.failure_history)
             ])
 
-        success, result = execute_task_with_worker(
+        success, result, worker_history = execute_task_with_worker(
             worker_agent, 
             next_task.description,
-            retry_info
+            user_goal=user_input,
+            retry_info=retry_info,
+            history=worker_history
         )
 
         if success:
@@ -222,8 +231,6 @@ def run_multi_agent_system(user_input: str,
             print(f"⚠️ 任务 [{next_task.id}] 失败")
             print(fail_result)
 
-        print(f"\n{task_manager.get_todo_list()}\n")
-
     print("\n" + "="*60)
     print("当前步骤: 生成最终报告")
     print("="*60 + "\n")
@@ -231,12 +238,22 @@ def run_multi_agent_system(user_input: str,
     final_summary = ManagementTools.task_manager.get_final_summary()
     print(final_summary)
 
-    summary_prompt = f"""任务执行已完成。请根据以下执行报告，为用户生成一个清晰、友好的最终回复。
+    summary_prompt = f"""任务执行已完成。请根据以下执行报告，直接回答用户的原始问题。
+
+用户原始问题: {user_input}
 
 执行报告:
 {final_summary}
 
-请总结完成了哪些工作，如果有失败的任务，说明原因。用简洁明了的语言回复用户。
+重要提示：
+- 不要报告任务执行情况（如"创建了文件"、"任务成功完成"等）
+- 直接回答用户的问题，就像你是在和用户对话一样
+- 从执行报告的任务结果中提取关键信息来回答用户
+- 如果任务失败导致无法回答，简要说明无法获取信息的原因
+
+例如：
+- 如果用户问"温江天气如何"，你应该回复天气情况，而不是"成功查询了天气"
+- 如果用户问"帮我写个脚本"，你应该告诉用户脚本已保存到哪里、主要功能是什么
 """
     
     try:
@@ -245,9 +262,9 @@ def run_multi_agent_system(user_input: str,
         print("🎯 最终回复")
         print("="*60)
         print(final_result.output)
-        return final_result.output
+        return final_result.output, manager_history
     except Exception as e:
-        return final_summary
+        return final_summary, manager_history
 
 
 def main():
@@ -256,6 +273,7 @@ def main():
     print("输入 '新任务' 可以清除上下文重新开始")
     print("输入 'quit' 或 'exit' 退出程序")
     print("="*60 + "\n")
+    manager_history = []
 
     while True:
         try:
@@ -269,13 +287,14 @@ def main():
                 break
             
             if '新任务' in user_input:
-                user_input = user_input.replace('新任务', '').strip()
-                if not user_input:
-                    print("请输入新的任务内容...")
-                    continue
+                manager_history = []
 
-            result = run_multi_agent_system(user_input, manager_model='gpt-5.1', worker_model='gpt-5-mini')
-            print('\n\nfinal result:', result)
+            result, manager_history = run_multi_agent_system(
+                user_input,
+                manager_model='gpt-5.1',
+                worker_model='gpt-5-mini',
+                manager_history=manager_history
+            )
             
         except KeyboardInterrupt:
             print("\n\n👋 程序已中断，再见！")

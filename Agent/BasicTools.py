@@ -6,6 +6,7 @@ import json
 from ddgs import DDGS
 import requests
 from bs4 import BeautifulSoup
+import MultimodalTools
 
 base_dir = Path("./WorkDatabase")
 
@@ -505,3 +506,39 @@ def copy_file(source: str, destination: str) -> str:
         return f"Security error: {e}"
     except Exception as e:
         return f"Copy error: {e}"
+
+
+workers_tools = [
+    # 文件操作
+    get_file_info,
+    list_files,
+    read_file,
+    write_file,
+    edit_file,
+    append_file,
+    copy_file,
+    rename_file,
+    delete_file,
+    # 目录操作
+    create_directory,
+    delete_directory,
+    # 搜索操作
+    search_in_files,
+    search_web,
+    # 网络操作
+    fetch_webpage,
+    http_request,
+    # 执行操作
+    run_command,
+    execute_file,
+    # 多模态图像理解
+    MultimodalTools.analyze_local_image,
+    MultimodalTools.analyze_image_url,
+    MultimodalTools.analyze_multiple_images,
+    MultimodalTools.analyze_videos_url,
+]
+
+workers_parameter = {
+    "temperature": 0.6,
+    "top_p": 0.8,
+}

@@ -323,3 +323,20 @@ def check_task_can_retry(task_id: str) -> str:
         return f"Task [{task_id}] {'can be retried' if can_retry else 'has reached maximum retry attempts'}\n" + \
                f"Current retry count: {task.retry_count}/{task.max_retries}"
     return f"Error: Task {task_id} does not exist"
+
+
+manager_tools = [
+    create_todo_list,
+    # get_todo_list,
+    # mark_task_complete,
+    # mark_task_failed,
+    # get_final_summary,
+    # get_next_pending_task,
+    # check_task_can_retry,
+]
+
+
+manager_parameter = {
+    "temperature": 0.3,
+    "top_p": 0.95,
+}

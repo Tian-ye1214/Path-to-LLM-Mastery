@@ -4,7 +4,8 @@ from BasicTools import workers_tools, workers_parameter
 from ManagementTools import manager_tools, manager_parameter, task_manager
 from typing import Tuple
 from BasicFunction import create_agent
-
+import logger
+import traceback
 
 
 def execute_task_with_worker(worker_agent: Agent, task_description: str,
@@ -19,34 +20,47 @@ def execute_task_with_worker(worker_agent: Agent, task_description: str,
         prompt += f"\n\nThis is a retry attempt. Previous failure details:\n{retry_info}\nPlease try an alternative approach to complete the task."
 
     try:
-        print(f"\n{'=' * 50}")
-        print(f"Working Agent 开始执行任务...")
-        print(f"当前任务: {task_description}")
+        logger.info("=" * 50)
+        logger.info("Working Agent 开始执行任务...")
+        logger.info(f"当前任务: {task_description}")
         if retry_info:
-            print(f"重试信息: {retry_info}")
-        print(f"{'=' * 50}")
+            logger.info(f"重试信息: {retry_info}")
+        logger.info("=" * 50)
 
         result = worker_agent.run_sync(prompt, message_history=history)
 
         output = result.output
         history = list(result.all_messages())
 
-        print(f"\n{'=' * 50}")
-        print(history)
-        print(f"\n{'=' * 50}")
+        logger.info(f"Working Agent 返回:\n{output}")
 
-        print(f"\nWorking Agent 返回:\n{output}\n")
+        output_upper = output.upper().strip()
+        output_lines = output.strip().split('\n')
+        first_line = output_lines[0].upper() if output_lines else ""
 
-        if "SUCCESS" in output.upper() or "成功" in output:
+        if first_line.startswith("FAILED:") or first_line.startswith("FAILED："):
+            return False, output, history
+        elif first_line.startswith("SUCCESS:") or first_line.startswith("SUCCESS："):
             return True, output, history
-        elif "FAILED" in output.upper() or "失败" in output or "错误" in output:
+        elif output_upper.startswith("ERROR:") or output_upper.startswith("错误:") or "执行异常" in output:
             return False, output, history
         else:
             return True, output, history
 
     except Exception as e:
         error_msg = f"执行异常: {str(e)}"
-        print(f"❌ {error_msg}")
+        logger.error(f"❌ {error_msg}")
+
+        logger.error(f"异常类型: {type(e).__name__}")
+        logger.error(f"异常详情:\n{traceback.format_exc()}")
+
+        if e.__cause__:
+            logger.error(f"原始异常 (cause): {type(e.__cause__).__name__}: {e.__cause__}")
+        if e.__context__ and e.__context__ != e.__cause__:
+            logger.error(f"上下文异常 (context): {type(e.__context__).__name__}: {e.__context__}")
+        if hasattr(e, 'args') and e.args:
+            logger.error(f"异常参数: {e.args}")
+        
         return False, error_msg, history or []
 
 
@@ -63,12 +77,14 @@ def run_multi_agent_system(user_input: str,
     3. 处理任务结果，失败则重试（最多3次）
     4. 所有任务完成后生成最终报告
     """
+    task_name = user_input[:30].replace(" ", "_")
+    logger.setup_task_logger(task_name)
+    
     worker_history = []
     manager_agent = create_agent(manager_model, manager_parameter, manager_tools, manager_system_prompt)
-    check_agent = create_agent(manager_model, manager_parameter, manager_tools, manager_system_prompt)
     worker_agent = create_agent(worker_model, workers_parameter, workers_tools, workers_system_prompt)
 
-    print("Current Phase: Manager Agent analyzing request and creating Todo List...")
+    logger.info("📌 当前步骤: 创建todo list")
     planning_prompt = f"""Please analyze the following user request and create a detailed task list (Todo List).
 
 User Request: {user_input}
@@ -79,41 +95,41 @@ Each task description should be sufficiently detailed to enable the Worker Agent
 
     try:
         result = manager_agent.run_sync(planning_prompt, message_history=manager_history)
-        manager_history = result.all_messages()
+        manager_history = list(result.all_messages())
     except Exception as e:
-        print(f"任务规划失败: {e}")
+        logger.error(f"任务规划失败: {e}")
         exit()
 
-    print("\n" + "=" * 60)
-    print("当前步骤: 开始执行任务...")
-    print("=" * 60 + "\n")
+    logger.info("=" * 60)
+    logger.info("当前步骤: 开始执行任务...")
+    logger.info("=" * 60)
 
     max_iterations = 50
     iteration = 0
 
     while iteration < max_iterations:
         iteration += 1
-        print(f"\n{task_manager.get_todo_list()}\n")
+        logger.info(f"\n{task_manager.get_todo_list()}\n")
         next_task = task_manager.get_next_task()
 
         if next_task is None:
             if task_manager.is_all_completed():
-                print("所有任务已完成！")
+                logger.info("所有任务已完成！")
                 break
             elif task_manager.has_failed_tasks():
-                print("存在无法完成的任务")
+                logger.warning("存在无法完成的任务")
                 break
             else:
-                print("没有可执行的任务")
+                logger.warning("没有可执行的任务")
                 break
 
         task_manager.mark_task_in_progress(next_task.id)
 
-        print(f"\n{'=' * 40}")
-        print(f"📌 执行任务 [{next_task.id}]: {next_task.description}")
+        logger.info("=" * 40)
+        logger.info(f"📌 执行任务 [{next_task.id}]: {next_task.description}")
         if next_task.retry_count > 0:
-            print(f"   (第 {next_task.retry_count + 1} 次尝试)")
-        print(f"{'=' * 40}")
+            logger.info(f"   (第 {next_task.retry_count + 1} 次尝试)")
+        logger.info("=" * 40)
 
         retry_info = ""
         if next_task.failure_history:
@@ -132,18 +148,19 @@ Each task description should be sufficiently detailed to enable the Worker Agent
 
         if success:
             task_manager.mark_task_complete(next_task.id, result)
-            print(f"✅ 任务 [{next_task.id}] 完成")
+            logger.info(f"✅ 任务 [{next_task.id}] 完成")
         else:
             fail_result = task_manager.mark_task_failed(next_task.id, result)
-            print(f"⚠️ 任务 [{next_task.id}] 失败")
-            print(fail_result)
+            logger.warning(f"⚠️ 任务 [{next_task.id}] 失败")
+            logger.warning(fail_result)
 
-    print("\n" + "=" * 60)
-    print("当前步骤: 生成最终报告")
-    print("=" * 60 + "\n")
+    logger.info("")
+    logger.info("=" * 60)
+    logger.info("当前步骤: 生成最终报告")
+    logger.info("=" * 60)
 
     final_summary = task_manager.get_final_summary()
-    print(final_summary)
+    logger.info(final_summary)
 
     summary_prompt = f"""Task execution completed. Please respond directly to the user's original question based on the execution report below.
 
@@ -165,10 +182,11 @@ Examples:
 
     try:
         final_result = manager_agent.run_sync(summary_prompt)
-        print("\n" + "=" * 60)
-        print("🎯 最终回复")
-        print("=" * 60)
-        print(final_result.output)
+        logger.info("")
+        logger.info("=" * 60)
+        logger.info("🎯 最终回复")
+        logger.info("=" * 60)
+        logger.info(final_result.output)
         return final_result.output, manager_history
     except Exception as e:
         return final_summary, manager_history
@@ -176,10 +194,11 @@ Examples:
 
 def main():
     """主函数 - 交互式运行"""
-    print("=" * 60)
-    print("输入 '新任务' 可以清除上下文重新开始")
-    print("输入 'quit' 或 'exit' 退出程序")
-    print("=" * 60 + "\n")
+    log = logger.get_logger()
+    log.info("=" * 60)
+    log.info("输入 '新任务' 可以清除上下文重新开始")
+    log.info("输入 'quit' 或 'exit' 退出程序")
+    log.info("=" * 60)
     manager_history = []
 
     while True:
@@ -190,11 +209,12 @@ def main():
                 continue
 
             if user_input.lower() in ['quit', 'exit', '退出']:
-                print("👋 再见！")
+                log.info("👋 再见！")
                 break
 
             if '新任务' in user_input:
                 manager_history = []
+                task_manager.reset()
 
             result, manager_history = run_multi_agent_system(
                 user_input,
@@ -204,10 +224,10 @@ def main():
             )
 
         except KeyboardInterrupt:
-            print("\n\n👋 程序已中断，再见！")
+            log.info("\n\n👋 程序已中断，再见！")
             break
         except Exception as e:
-            print(f"\n❌ 发生错误: {e}")
+            log.error(f"\n❌ 发生错误: {e}")
             import traceback
             traceback.print_exc()
 

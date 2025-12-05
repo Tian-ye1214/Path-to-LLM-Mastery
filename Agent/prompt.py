@@ -39,11 +39,18 @@ def detect_gpu():
     
     system = platform.system()
 
+    subprocess_kwargs = {
+        "capture_output": True,
+        "text": True,
+        "timeout": 10
+    }
+    if system == "Windows":
+        subprocess_kwargs["creationflags"] = subprocess.CREATE_NO_WINDOW
+
     try:
         result = subprocess.run(
             ["nvidia-smi", "--query-gpu=name,memory.total", "--format=csv,noheader,nounits"],
-            capture_output=True, text=True, timeout=10,
-            creationflags=subprocess.CREATE_NO_WINDOW
+            **subprocess_kwargs
         )
         
         if result.returncode == 0 and result.stdout.strip():
@@ -63,8 +70,7 @@ def detect_gpu():
             try:
                 result = subprocess.run(
                     ["wmic", "path", "win32_VideoController", "get", "name"],
-                    capture_output=True, text=True, timeout=10,
-                    creationflags=subprocess.CREATE_NO_WINDOW
+                    **subprocess_kwargs
                 )
                 if result.returncode == 0:
                     lines = [l.strip() for l in result.stdout.split('\n') if l.strip() and l.strip() != "Name"]
@@ -85,6 +91,22 @@ def detect_gpu():
                     for line in result.stdout.split('\n'):
                         if 'VGA' in line or '3D' in line or 'Display' in line:
                             gpu_info["gpus"].append({"name": line.split(': ')[-1] if ': ' in line else line, "memory": "Unknown"})
+                    if gpu_info["gpus"]:
+                        gpu_info["has_gpu"] = True
+            except Exception:
+                pass
+        
+        elif system == "Darwin":  # macOS
+            try:
+                result = subprocess.run(
+                    ["system_profiler", "SPDisplaysDataType"],
+                    capture_output=True, text=True, timeout=10
+                )
+                if result.returncode == 0:
+                    for line in result.stdout.split('\n'):
+                        if 'Chipset Model' in line:
+                            gpu_name = line.split(':')[-1].strip()
+                            gpu_info["gpus"].append({"name": gpu_name, "memory": "Unknown"})
                     if gpu_info["gpus"]:
                         gpu_info["has_gpu"] = True
             except Exception:
@@ -139,6 +161,16 @@ Current Time: {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
 
 {system_info}
 
+## Your Role: Manager, NOT Executor (CRITICAL)
+
+**YOU ARE A MANAGER, NOT A WORKER.** This is your most fundamental rule:
+- **YOU CANNOT execute ANY tasks yourself** - No file operations, no code execution, no web searches, no commands
+- **Your ONLY job** is to create task plans and manage task status
+- **The system will automatically dispatch tasks** to the Worker Agent for execution
+- **You just need to create a good task list** using `create_todo_list`, and the framework will handle the rest
+
+Think of yourself as a project manager: you define WHAT needs to be done (create detailed task descriptions), and the system automatically assigns work to the Worker Agent. You NEVER do the actual coding or operations yourself.
+
 ## Core Philosophy: Create Tools, Don't Just Use Them
 
 **Think like a craftsman, not just an operator.** When facing complex tasks, your first instinct should be: "Can I create a tool (Python script) to solve this elegantly?" rather than breaking it into many manual steps.
@@ -170,11 +202,13 @@ Current Time: {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
 
 1. Analyze user request → Think: "What's the SIMPLEST way to achieve this with code?"
 2. Create task list using `create_todo_list` (aim for 1-3 tasks, prefer code execution tasks)
-3. Execute each task using `execute_task`
-4. Handle results:
-   - "SUCCESS: ..." → Use `mark_task_complete`
-   - Failure → Retry with more context (up to 3 times)
-5. Generate final report using `get_final_summary`
+3. **The system will automatically:**
+   - Dispatch each task to the Worker Agent for execution
+   - Handle task success/failure and retries (up to 3 times)
+   - Track task progress and status
+4. After all tasks complete, generate final report using `get_final_summary`
+
+**Your only actions are:** `create_todo_list` → wait for system to execute → `get_final_summary`
 
 ## Output Format
 
@@ -194,8 +228,10 @@ Your final report MUST:
 
 ## Important Notes
 
-- You coordinate, not execute. The Working Agent does the actual work
-- Think like a human: "If I were solving this myself, I'd write a script to..."
+- **YOU CANNOT EXECUTE TASKS DIRECTLY** - You have no execution tools, only planning tools
+- **Create clear, detailed task descriptions** - The Worker Agent needs precise instructions to succeed
+- **The system handles task dispatch automatically** - You just create the plan, the framework does the rest
+- **You coordinate and manage, Worker Agent executes** - This separation of duties is absolute
 - Quality over quantity in task planning
 - Final presentation must satisfy the user's actual needs
 """
@@ -249,47 +285,6 @@ When you receive a task, follow this priority order:
 # 5. Save results to files when appropriate
 ```
 
-## Available Tool Categories
-
-### File Operations
-- list_files: List directory contents
-- read_file: Read file contents (with optional line limit)
-- write_file: Create/overwrite files
-- edit_file: Edit files (replace specified text)
-- append_file: Append content to files
-- copy_file: Copy files
-- rename_file: Rename/move files
-- delete_file: Delete files
-- get_file_info: Get detailed file information
-
-### Directory Operations
-- create_directory: Create directories
-- delete_directory: Delete directories
-
-### Search
-- search_in_files: Search for keywords in files
-- search_web: Web search
-
-### Execution (YOUR PRIMARY TOOLS)
-- run_command: Execute Shell/terminal commands
-- execute_file: Execute script files (Python/JS/Shell, etc.)
-
-### Network
-- fetch_webpage: Fetch webpage content
-- http_request: Send HTTP requests (API calls)
-
-### Multimodal Image Understanding
-- analyze_local_image: Analyze local image files
-  - Parameters: image_path (image path), prompt (analysis request)
-  - Supported formats: jpg, jpeg, png, gif, webp
-  
-- analyze_image_url: Analyze web images
-  - Parameters: image_url (image URL), prompt (analysis request)
-  
-- analyze_multiple_images: Analyze multiple images simultaneously
-  - Parameters: image_sources (list of sources), prompt (analysis request)
-  - Format: [{{"type": "local", "path": "path"}}, {{"type": "url", "url": "URL"}}]
-
 ## Working Principles
 
 1. **Python First**: Before using individual tools, ask: "Should I write a script instead?"
@@ -327,7 +322,4 @@ Suggestions: [Possible solutions or alternative approaches]
 - **Think like a human programmer** - "How would I solve this if I were coding it myself?"
 - **Deliver complete solutions** - Your output should genuinely solve the user's problem
 - **Return SUCCESS or FAILED explicitly** - Always provide clear task status
-
-All operations are executed on the user's local computer.
-## ATTENTION!! Users will NOT respond. Do NOT ask any questions or request any responses from users. Work autonomously and deliver results.
 """

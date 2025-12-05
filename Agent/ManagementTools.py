@@ -2,6 +2,7 @@ from typing import List, Dict, Optional
 from dataclasses import dataclass, field
 from enum import Enum
 import json_repair as json
+import logger
 
 
 class TaskStatus(Enum):
@@ -31,6 +32,12 @@ class TaskManager:
         self.tasks: Dict[str, Task] = {}
         self.task_order: List[str] = []
     
+    def reset(self):
+        """Reset task manager state, clear all tasks"""
+        self.tasks.clear()
+        self.task_order.clear()
+        logger.debug("(task_manager reset)")
+    
     def create_todo_list(self, tasks_json: str) -> str:
         """
         Create a task list from JSON.
@@ -38,7 +45,7 @@ class TaskManager:
             tasks_json: JSON format task list, format:
                 [{"id": "1", "description": "Task description", "dependencies": ["dependent task id"]}]
         """
-        print(f"(create_todo_list)")
+        logger.debug("(create_todo_list)")
         try:
             tasks_data = json.loads(tasks_json)
             self.tasks.clear()
@@ -95,11 +102,16 @@ class TaskManager:
         for task_id in self.task_order:
             task = self.tasks[task_id]
             if task.status == TaskStatus.PENDING:
-                deps_completed = all(
-                    self.tasks.get(dep_id, Task(id="", description="")).status == TaskStatus.COMPLETED
-                    for dep_id in task.dependencies
-                )
-                if deps_completed:
+                deps_satisfied = True
+                for dep_id in task.dependencies:
+                    if dep_id not in self.tasks:
+                        logger.warning(f"Warning: Dependency task '{dep_id}' does not exist, ignoring this dependency")
+                        continue
+                    if self.tasks[dep_id].status != TaskStatus.COMPLETED:
+                        deps_satisfied = False
+                        break
+                
+                if deps_satisfied:
                     return task
         return None
     
@@ -117,7 +129,7 @@ class TaskManager:
             task_id: Task ID
             result: Task execution result
         """
-        print(f"(mark_task_complete {task_id})")
+        logger.debug(f"(mark_task_complete {task_id})")
         if task_id not in self.tasks:
             return f"Error: Task {task_id} does not exist"
         
@@ -134,7 +146,7 @@ class TaskManager:
             task_id: Task ID
             reason: Failure reason
         """
-        print(f"(mark_task_failed {task_id})")
+        logger.debug(f"(mark_task_failed {task_id})")
         if task_id not in self.tasks:
             return f"Error: Task {task_id} does not exist"
         
@@ -147,7 +159,7 @@ class TaskManager:
             return f"Task [{task_id}] has reached maximum retry attempts ({task.max_retries})\nFailure history:\n" + \
                    "\n".join([f"  Attempt {i+1}: {r}" for i, r in enumerate(task.failure_history)])
         else:
-            task.status = TaskStatus.PENDING  # Reset to pending, waiting for retry
+            task.status = TaskStatus.PENDING
             return f"Task [{task_id}] execution failed, preparing retry attempt {task.retry_count + 1}\n" + \
                    f"Failure reason: {reason}\n" + \
                    f"Remaining retries: {task.max_retries - task.retry_count}"
@@ -168,7 +180,7 @@ class TaskManager:
     
     def get_todo_list(self) -> str:
         """Get current Todo List status"""
-        print("(get_todo_list)")
+        logger.debug("(get_todo_list)")
         return self._format_todo_list()
     
     def is_all_completed(self) -> bool:
@@ -189,7 +201,7 @@ class TaskManager:
         """
         Generate the final task execution summary report.
         """
-        print("(get_final_summary)")
+        logger.debug("(get_final_summary)")
         lines = [
             "=" * 50,
             "📊 Task Execution Summary Report",
@@ -296,7 +308,7 @@ def get_next_pending_task() -> str:
     Get the next pending task.
     Automatically considers task dependencies.
     """
-    print("(get_next_pending_task)")
+    logger.debug("(get_next_pending_task)")
     task = task_manager.get_next_task()
     if task:
         task_manager.mark_task_in_progress(task.id)
@@ -339,4 +351,5 @@ manager_tools = [
 manager_parameter = {
     "temperature": 0.3,
     "top_p": 0.95,
+    "max_tokens": 65536,
 }

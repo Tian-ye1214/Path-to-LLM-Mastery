@@ -3,8 +3,8 @@ import mimetypes
 from pydantic_ai import Agent, BinaryContent, ImageUrl, VideoUrl
 from pydantic_ai.models.openai import OpenAIChatModel
 from pydantic_ai.providers.openai import OpenAIProvider
+import logger
 from dotenv import load_dotenv
-
 load_dotenv()
 
 _provider = OpenAIProvider(
@@ -65,6 +65,7 @@ def analyze_local_image(image_path: str, prompt: str = "Please describe the cont
         >>> analyze_local_image("./screenshot.png", "Please recognize the text in the image")
         >>> analyze_local_image("C:/images/photo.jpg", "Describe the content of this photo")
     """
+    logger.debug(f"(analyze_local_image), image_path={image_path}, prompt={prompt}")
     try:
         image_bytes, media_type = _encode_image_file_to_bytes(image_path)
         
@@ -108,6 +109,7 @@ def analyze_image_url(image_url: str, prompt: str = "Please describe the content
         >>> analyze_image_url("https://example.com/image.jpg", "Please describe this image")
         >>> analyze_image_url("https://example.com/chart.png", "Analyze what data this chart shows")
     """
+    logger.debug(f"(analyze_image_url), image_path={image_url}, prompt={prompt}")
     try:
         if not image_url.startswith(('http://', 'https://')):
             return "Error: Image URL must start with http:// or https://"
@@ -143,6 +145,7 @@ def analyze_videos_url(video_url: str, prompt: str = "Please describe the conten
     Returns:
         str: Video analysis result
     """
+    logger.debug(f"(analyze_videos_url), image_path={video_url}, prompt={prompt}")
     try:
         if not video_url.startswith(('http://', 'https://')):
             return "Error: Video URL must start with http:// or https://"

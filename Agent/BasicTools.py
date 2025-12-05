@@ -2,11 +2,12 @@ from pathlib import Path
 import os
 import subprocess
 import datetime
-import json
+import json_repair as json
 from ddgs import DDGS
 import requests
 from bs4 import BeautifulSoup
 import MultimodalTools
+import logger
 
 base_dir = Path("./WorkDatabase")
 
@@ -26,7 +27,7 @@ def read_file(name: str, max_lines: int = None) -> str:
         name: File name/path
         max_lines: Optional, maximum number of lines to read (prevents context overflow for large files)
     """
-    print(f"(read_file {name}, max_lines={max_lines})")
+    logger.debug(f"(read_file {name}, max_lines={max_lines})")
     try:
         file_path = _safe_path(name)
         with open(file_path, "r", encoding="utf-8", errors="replace") as f:
@@ -52,7 +53,7 @@ def list_files(directory: str = "") -> str:
     Parameters:
         directory: Optional, subdirectory path, defaults to root directory
     """
-    print(f"(list_files {directory})")
+    logger.debug(f"(list_files {directory})")
     try:
         target_dir = _safe_path(directory) if directory else base_dir
         if not target_dir.exists():
@@ -80,7 +81,7 @@ def rename_file(name: str, new_name: str) -> str:
         name: Original file name/path
         new_name: New file name/path
     """
-    print(f"(rename_file {name} -> {new_name})")
+    logger.debug(f"(rename_file {name} -> {new_name})")
     try:
         old_path = _safe_path(name)
         new_path = _safe_path(new_name)
@@ -102,7 +103,7 @@ def delete_file(name: str) -> str:
     Parameters:
         name: File name/path to delete
     """
-    print(f"(delete_file {name})")
+    logger.debug(f"(delete_file {name})")
     try:
         file_path = _safe_path(name)
         if not file_path.exists():
@@ -118,20 +119,37 @@ def write_file(name: str, content: str) -> str:
     """
     Create or overwrite a file.
     Parameters:
-        name: File name/path
-        content: Content to write
+        name: File name/path (relative to WorkDatabase directory)
+        content: Content to write (must be a string)
+    
+    IMPORTANT LIMITATIONS:
+    - Maximum content length: 10000 characters (to avoid JSON parsing issues)
+    - For larger files: Use write_file_chunked() or split content into multiple writes
+    - For code files: Keep under 300 lines per file for best results
     """
-    print(f"(write_file {name})")
+    content_len = len(content) if content else 0
+    logger.debug(f"(write_file {name}, content_length={content_len}) [开始]")
     try:
+        if content is None:
+            return "Write error: content cannot be None"
+        if not isinstance(content, str):
+            content = str(content)
+
+        line_count = content.count('\n') + 1
+        base_dir.mkdir(parents=True, exist_ok=True)
         file_path = _safe_path(name)
         os.makedirs(file_path.parent, exist_ok=True)
         with open(file_path, "w", encoding="utf-8") as f:
             f.write(content)
-        return f"File '{name}' written successfully ({len(content)} characters)"
+        
+        result = f"File '{name}' written successfully ({len(content)} characters, {line_count} lines)"
+        return result
     except ValueError as e:
         return f"Security error: {e}"
+    except PermissionError as e:
+        return f"Permission error: Cannot write to '{name}' - {e}"
     except Exception as e:
-        return f"Write error: {e}"
+        return f"Write error: {type(e).__name__} - {e}"
 
 def execute_file(name: str, args: str = "") -> str:
     """
@@ -140,7 +158,7 @@ def execute_file(name: str, args: str = "") -> str:
         name: File name/path to execute
         args: Optional, command-line arguments to pass to the script
     """
-    print(f"(execute_file {name} {args})")
+    logger.debug(f"(execute_file {name} {args})")
     try:
         file_path = _safe_path(name)
         if not file_path.exists():
@@ -188,7 +206,7 @@ def search_web(query: str, max_results: int = 5) -> str:
         query: Search keywords
         max_results: Maximum number of results to return, defaults to 5
     """
-    print(f"(search_web query='{query}', max_results={max_results})")
+    logger.debug(f"(search_web query='{query}', max_results={max_results})")
     try:
         with DDGS() as ddgs:
             results = list(ddgs.text(query, max_results=max_results, region='cn-zh'))
@@ -214,7 +232,7 @@ def fetch_webpage(url: str, extract_text: bool = True) -> str:
         url: The URL of the webpage to fetch
         extract_text: If True, returns the extracted plain text; if False, returns the raw HTML
     """
-    print(f"(fetch_webpage url='{url}', extract_text={extract_text})")
+    logger.debug(f"(fetch_webpage url='{url}', extract_text={extract_text})")
     try:
         headers = {
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
@@ -244,6 +262,34 @@ def fetch_webpage(url: str, extract_text: bool = True) -> str:
         return f"Error processing webpage content: {e}"
 
 
+import shlex
+import platform as _platform
+
+_DANGEROUS_PATTERNS = [
+    'rm -rf /',
+    'rm -rf /*',
+    'mkfs.',
+    'dd if=',
+    ':(){:|:&};:',
+    '> /dev/sda',
+    'chmod -R 777 /',
+    'chown -R',
+    '| sh',
+    '| bash',
+    '`',
+    '$(',
+    'eval ',
+    'exec ',
+]
+
+def _is_command_safe(command: str) -> tuple[bool, str]:
+    """Check if command contains dangerous patterns"""
+    command_lower = command.lower().strip()
+    for pattern in _DANGEROUS_PATTERNS:
+        if pattern.lower() in command_lower:
+            return False, f"Dangerous command pattern detected: '{pattern}'"
+    return True, ""
+
 def run_command(command: str, timeout: int = 60) -> str:
     """
     Execute a Shell/terminal command.
@@ -251,18 +297,49 @@ def run_command(command: str, timeout: int = 60) -> str:
         command: Command to execute
         timeout: Timeout in seconds, defaults to 60
     """
-    print(f"(run_command: {command})")
+    logger.debug(f"(run_command: {command})")
+    is_safe, reason = _is_command_safe(command)
+    if not is_safe:
+        return f"Security error: {reason}"
+    
     try:
-        result = subprocess.run(
-            command,
-            shell=True,
-            capture_output=True,
-            text=True,
-            encoding="utf-8",
-            errors="replace",
-            timeout=timeout,
-            cwd=str(base_dir)
-        )
+        use_shell = any(c in command for c in ['|', '>', '<', '&&', '||', ';', '*', '?'])
+        
+        if use_shell:
+            result = subprocess.run(
+                command,
+                shell=True,
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                timeout=timeout,
+                cwd=str(base_dir)
+            )
+        else:
+            if _platform.system() == "Windows":
+                result = subprocess.run(
+                    command,
+                    shell=True,
+                    capture_output=True,
+                    text=True,
+                    encoding="utf-8",
+                    errors="replace",
+                    timeout=timeout,
+                    cwd=str(base_dir)
+                )
+            else:
+                cmd_parts = shlex.split(command)
+                result = subprocess.run(
+                    cmd_parts,
+                    capture_output=True,
+                    text=True,
+                    encoding="utf-8",
+                    errors="replace",
+                    timeout=timeout,
+                    cwd=str(base_dir)
+                )
+        
         output = result.stdout + result.stderr
         return_code = result.returncode
         return f"Return code: {return_code}\nOutput:\n{output}" if output else f"Execution completed, return code: {return_code}"
@@ -280,7 +357,7 @@ def edit_file(name: str, old_text: str, new_text: str) -> str:
         old_text: Original text to replace
         new_text: New text to substitute
     """
-    print(f"(edit_file {name})")
+    logger.debug(f"(edit_file {name})")
     try:
         file_path = _safe_path(name)
         if not file_path.exists():
@@ -311,7 +388,7 @@ def append_file(name: str, content: str) -> str:
         name: File name/path
         content: Content to append
     """
-    print(f"(append_file {name})")
+    logger.debug(f"(append_file {name})")
     try:
         file_path = _safe_path(name)
         os.makedirs(file_path.parent, exist_ok=True)
@@ -331,7 +408,7 @@ def search_in_files(keyword: str, file_extension: str = None) -> str:
         keyword: Keyword to search for
         file_extension: Optional, limit search to specific file types, e.g., ".py", ".txt"
     """
-    print(f"(search_in_files keyword='{keyword}', ext={file_extension})")
+    logger.debug(f"(search_in_files keyword='{keyword}', ext={file_extension})")
     results = []
     try:
         for file_path in base_dir.rglob("*"):
@@ -364,7 +441,7 @@ def create_directory(name: str) -> str:
     Parameters:
         name: Directory name/path
     """
-    print(f"(create_directory {name})")
+    logger.debug(f"(create_directory {name})")
     try:
         dir_path = _safe_path(name)
         os.makedirs(dir_path, exist_ok=True)
@@ -382,7 +459,7 @@ def delete_directory(name: str, force: bool = False) -> str:
         name: Directory name/path
         force: Whether to force delete non-empty directories
     """
-    print(f"(delete_directory {name}, force={force})")
+    logger.debug(f"(delete_directory {name}, force={force})")
     try:
         import shutil
         dir_path = _safe_path(name)
@@ -415,7 +492,7 @@ def http_request(url: str, method: str = "GET", data: str = None, headers: str =
         data: Request body data (JSON string format)
         headers: Request headers (JSON string format)
     """
-    print(f"(http_request {method} {url})")
+    logger.debug(f"(http_request {method} {url})")
     try:
         req_headers = {
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
@@ -454,7 +531,7 @@ def get_file_info(name: str) -> str:
     Parameters:
         name: File name/path
     """
-    print(f"(get_file_info {name})")
+    logger.debug(f"(get_file_info {name})")
     try:
         file_path = _safe_path(name)
         if not file_path.exists():
@@ -490,7 +567,7 @@ def copy_file(source: str, destination: str) -> str:
         source: Source file path
         destination: Destination file path
     """
-    print(f"(copy_file {source} -> {destination})")
+    logger.debug(f"(copy_file {source} -> {destination})")
     try:
         import shutil
         src_path = _safe_path(source)
@@ -541,4 +618,5 @@ workers_tools = [
 workers_parameter = {
     "temperature": 0.6,
     "top_p": 0.8,
+    "max_tokens": 65536,
 }

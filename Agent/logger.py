@@ -1,13 +1,22 @@
 import logging
 import sys
+import os
 from datetime import datetime
 from pathlib import Path
 
+
+os.environ['PYTHONUNBUFFERED'] = '1'
 LOG_DIR = Path("./logs")
 LOG_DIR.mkdir(parents=True, exist_ok=True)
 
 _logger = None
 _current_log_file = None
+
+
+class ImmediateStreamHandler(logging.StreamHandler):
+    def emit(self, record):
+        super().emit(record)
+        self.flush()
 
 
 class ColorFormatter(logging.Formatter):
@@ -23,10 +32,13 @@ class ColorFormatter(logging.Formatter):
     def __init__(self, fmt=None, datefmt=None):
         super().__init__(fmt, datefmt)
         if sys.platform == "win32":
-            import ctypes
-            ctypes.windll.kernel32.SetConsoleMode(
-                ctypes.windll.kernel32.GetStdHandle(-11), 7
-            )
+            try:
+                import ctypes
+                kernel32 = ctypes.windll.kernel32
+                kernel32.SetConsoleMode(kernel32.GetStdHandle(-11), 7)
+                kernel32.SetConsoleMode(kernel32.GetStdHandle(-12), 7)  # stderr
+            except Exception:
+                pass
     
     def format(self, record):
         color = self.COLORS.get(record.levelno, self.RESET)
@@ -40,9 +52,10 @@ def get_logger() -> logging.Logger:
     if _logger is None:
         _logger = logging.getLogger("AgentDemo")
         _logger.setLevel(logging.DEBUG)
+        _logger.propagate = False
 
         if not _logger.handlers:
-            console_handler = logging.StreamHandler(sys.stdout)
+            console_handler = ImmediateStreamHandler(sys.stderr)
             console_handler.setLevel(logging.DEBUG)
             console_format = ColorFormatter(
                 '%(asctime)s | %(levelname)-8s | %(message)s',
@@ -55,15 +68,6 @@ def get_logger() -> logging.Logger:
 
 
 def setup_task_logger(task_name: str = "task") -> logging.Logger:
-    """
-    为新任务设置日志，创建新的日志文件
-    
-    Parameters:
-        task_name: 任务名称，用于日志文件命名
-    
-    Returns:
-        配置好的logger实例
-    """
     global _logger, _current_log_file
 
     safe_task_name = "".join(c if c.isalnum() or c in ('_', '-') else '_' for c in task_name)
@@ -75,10 +79,11 @@ def setup_task_logger(task_name: str = "task") -> logging.Logger:
 
     _logger = logging.getLogger("AgentDemo")
     _logger.setLevel(logging.DEBUG)
+    _logger.propagate = False
 
     _logger.handlers.clear()
 
-    console_handler = logging.StreamHandler(sys.stdout)
+    console_handler = ImmediateStreamHandler(sys.stderr)
     console_handler.setLevel(logging.DEBUG)
     console_format = ColorFormatter(
         '%(asctime)s | %(levelname)-8s | %(message)s',
@@ -117,28 +122,17 @@ def close_logger():
             _logger.removeHandler(handler)
 
 
-def _flush_handlers():
-    """刷新所有handler的缓冲区"""
-    logger = get_logger()
-    for handler in logger.handlers:
-        handler.flush()
-
 def debug(msg, *args, **kwargs):
     get_logger().debug(msg, *args, **kwargs)
-    _flush_handlers()
 
 def info(msg, *args, **kwargs):
     get_logger().info(msg, *args, **kwargs)
-    _flush_handlers()
 
 def warning(msg, *args, **kwargs):
     get_logger().warning(msg, *args, **kwargs)
-    _flush_handlers()
 
 def error(msg, *args, **kwargs):
     get_logger().error(msg, *args, **kwargs)
-    _flush_handlers()
 
 def critical(msg, *args, **kwargs):
     get_logger().critical(msg, *args, **kwargs)
-    _flush_handlers()
